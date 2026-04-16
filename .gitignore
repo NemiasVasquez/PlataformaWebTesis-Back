@@ -11,12 +11,9 @@ ENV/
 db.sqlite3
 anemia/media/*
 !anemia/media/.gitkeep
-anemia/imagenes/*
-!anemia/imagenes/.gitkeep
 anemia/modelos_guardados/*
 !anemia/modelos_guardados/.gitkeep
 
 # Other
 anemia/matriz_confusion.png
-anemia/modelo/*
-!anemia/modelo/.gitkeep
+
