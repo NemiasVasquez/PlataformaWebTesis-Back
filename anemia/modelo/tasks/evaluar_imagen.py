@@ -96,7 +96,7 @@ def evaluar_imagen_individual(imagen):
     
     # Renombrar todas las carpetas 'SIN ANEMIA' al resultado real si es CON ANEMIA
     if resultado_clase == "CON ANEMIA":
-        pasos = ['entrada', 'filtrada', 'segmentada', 'recortada', 'png', 'resize']
+        pasos = ['entrada', 'filtrada', 'area', 'segmentada', 'recortada', 'png', 'resize']
         for paso in pasos:
             ruta_paso_old = os.path.join(ruta_base, paso, 'SIN ANEMIA')
             ruta_paso_new = os.path.join(ruta_base, paso, 'CON ANEMIA')
