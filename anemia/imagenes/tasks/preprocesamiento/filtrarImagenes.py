@@ -53,26 +53,28 @@ def filtrar_conjuntiva(ruta_entrada, ruta_salida, ruta_no_filtrados, ruta_report
     def ojo_abierto(img):
         """
         Detecta si el ojo está abierto buscando el iris.
-        Ajustado para permitir ojos mirando arriba o iris parciales.
+        Permisivo con ojos mirando hacia arriba o iris parcialmente cubiertos.
         """
         hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
         
-        # Aumentamos el rango de V (brillo) para detectar ojos claros o con reflejos
-        mask_iris = cv2.inRange(hsv, np.array([0, 0, 0]), np.array([180, 255, 75]))
+        # Rango de oscuridad para captar Iris (incluye marrones, negros y sombras del iris)
+        mask_iris = cv2.inRange(hsv, np.array([0, 0, 0]), np.array([180, 255, 80]))
         
-        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
+        # Limpieza para ignorar vellos finos
+        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (7, 7))
         mask_iris = cv2.morphologyEx(mask_iris, cv2.MORPH_OPEN, kernel)
         
         contornos, _ = cv2.findContours(mask_iris, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         for c in contornos:
             area = cv2.contourArea(c)
-            if area > 300: # Un poco más permisivo con el tamaño
-                perimetro = cv2.arcLength(c, True)
-                if perimetro > 0:
-                    circularidad = (4 * np.pi * area) / (perimetro * perimetro)
-                    # Bajamos el umbral de circularidad (0.2) para permitir iris mirando a los lados
-                    if circularidad > 0.18:
-                        return True
+            # El iris es una masa oscura significativa
+            if area > 400: 
+                x, y, w, h = cv2.boundingRect(c)
+                aspect_ratio = float(w) / h
+                # Si no es demasiado alargado (como una pestaña horizontal o vertical) 
+                # y tiene masa, lo aceptamos como iris parcial
+                if 0.3 < aspect_ratio < 3.0:
+                    return True
         return False
 
 
