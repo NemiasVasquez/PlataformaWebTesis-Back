@@ -155,6 +155,19 @@ def segmentar_y_recortar_conjuntiva(ruta_entrada, ruta_salida_segmentadas, ruta_
         k_final = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (11, 11))
         grown_mask = cv2.morphologyEx(grown_mask, cv2.MORPH_CLOSE, k_final)
 
+        # ── FILTRO SUAVIZADO EXTREMO: quitar picos y huecos ──────────────────
+        # 1. CLOSE muy grande para rellenar ese hueco/mordida superior
+        k_close_big = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (25, 25))
+        grown_mask = cv2.morphologyEx(grown_mask, cv2.MORPH_CLOSE, k_close_big)
+
+        # 2. OPEN grande para cortar picos sobresalientes
+        k_open_big = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (21, 21))
+        grown_mask = cv2.morphologyEx(grown_mask, cv2.MORPH_OPEN, k_open_big)
+        
+        # 3. Difuminar fuerte y binarizar para curva perfecta
+        grown_mask = cv2.GaussianBlur(grown_mask, (25, 25), 0)
+        _, grown_mask = cv2.threshold(grown_mask, 127, 255, cv2.THRESH_BINARY)
+
         return grown_mask
 
 
