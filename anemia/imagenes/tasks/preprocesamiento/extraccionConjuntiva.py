@@ -6,7 +6,7 @@ import numpy as np
 import glob
 from datetime import datetime
 from .segmentacion_ojo import segment_image_with_unet, crop_segmented_image
-from modelo.tasks.config import MODELO_UNET_PATH
+# from modelo.tasks.config import MODELO_UNET_PATH  # Removido por instrucción del usuario
 
 def segmentar_y_recortar_conjuntiva(ruta_entrada, ruta_salida_segmentadas, ruta_salida_recortadas, ruta_salida_png):
     categorias = ['SIN ANEMIA', 'CON ANEMIA']
@@ -18,10 +18,9 @@ def segmentar_y_recortar_conjuntiva(ruta_entrada, ruta_salida_segmentadas, ruta_
 
     start = datetime.now()
     
-    # Verificar si el modelo UNet existe
-    unet_path = MODELO_UNET_PATH
-    if not os.path.exists(unet_path):
-        print(f"⚠️ MODELO UNET NO ENCONTRADO en {unet_path}. Usando segmentación por color (HEURÍSTICA).")
+    # El modelo UNet ya no se usa por instrucción del usuario.
+    # Se utiliza segmentación por color (HEURÍSTICA).
+    unet_path = None
 
     for categoria in categorias:
         ruta_imgs = glob.glob(os.path.join(ruta_entrada, categoria, '*.jpeg')) + \
@@ -34,7 +33,7 @@ def segmentar_y_recortar_conjuntiva(ruta_entrada, ruta_salida_segmentadas, ruta_
                 continue
 
             # Selección de método de segmentación
-            if os.path.exists(unet_path):
+            if unet_path and os.path.exists(unet_path):
                 # Método UNet (Proporcionado por el usuario)
                 try:
                     seg_img, mask = segment_image_with_unet(img_original, unet_path)
@@ -48,18 +47,82 @@ def segmentar_y_recortar_conjuntiva(ruta_entrada, ruta_salida_segmentadas, ruta_
                     continue
             else:
                 # Método Heurístico (Original del proyecto)
+                def detect_iris(img):
+                    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+                    blurred = cv2.medianBlur(gray, 11)
+                    # El iris suele ser la zona más oscura y circular
+                    circles = cv2.HoughCircles(blurred, cv2.HOUGH_GRADIENT, 1, 50,
+                                              param1=100, param2=30, minRadius=30, maxRadius=150)
+                    if circles is not None:
+                        return circles[0][0] # x, y, r
+                    return None
+
+                def remove_eyelashes(img):
+                    # Máscara para píxeles muy oscuros (pestañas)
+                    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+                    _, mask_dark = cv2.threshold(gray, 45, 255, cv2.THRESH_BINARY)
+                    return mask_not_black # Omitiendo por brevedad, se integra abajo
+
                 def heuristic_segmentation(img):
+                    high, wide = img.shape[:2]
+                    
+                    # 1. Localizar Iris (Ancla espacial)
+                    iris = detect_iris(img)
+                    iris_y = high * 0.4 if iris is None else iris[1]
+                    iris_r = 60 if iris is None else iris[2]
+                    
+                    # 2. Filtrar Pestañas (Negros/Marrones oscuros)
+                    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+                    _, mask_not_black = cv2.threshold(gray, 60, 255, cv2.THRESH_BINARY)
+                    
+                    # 3. Detectar Tejido Conuntival (Rojo/Rosa Saturado)
+                    # Estrechamos Hue y subimos Saturation para no tomar piel (que es más pálida/amarilla)
                     hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
-                    lower_red1 = np.array([0, 100, 50]); upper_red1 = np.array([10, 255, 255])
-                    lower_red2 = np.array([160, 100, 50]); upper_red2 = np.array([180, 255, 255])
-                    mask_red = cv2.inRange(hsv, lower_red1, upper_red1) | cv2.inRange(hsv, lower_red2, upper_red2)
-                    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (9, 9))
-                    mask_clean = cv2.morphologyEx(mask_red, cv2.MORPH_CLOSE, kernel)
+                    # Rango 1 (Rojos)
+                    l1, u1 = np.array([0, 110, 50]), np.array([10, 255, 255])
+                    # Rango 2 (Rojos altos)
+                    l2, u2 = np.array([170, 110, 50]), np.array([180, 255, 255])
+                    
+                    mask_red = cv2.inRange(hsv, l1, u1) | cv2.inRange(hsv, l2, u2)
+                    
+                    # Combinación: Rojo Saturado + No Pestaña
+                    mask_combined = cv2.bitwise_and(mask_red, mask_not_black)
+                    
+                    # Limpieza morfológica para unir la "media luna"
+                    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (13, 13))
+                    mask_clean = cv2.morphologyEx(mask_combined, cv2.MORPH_OPEN, kernel)
+                    mask_clean = cv2.morphologyEx(mask_clean, cv2.MORPH_CLOSE, kernel)
+                    
                     contours, _ = cv2.findContours(mask_clean, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
                     final_mask = np.zeros_like(mask_red)
+                    
+                    valid_blobs = []
                     for cnt in contours:
-                        if cv2.contourArea(cnt) > 200:
-                            cv2.drawContours(final_mask, [cnt], -1, 255, -1)
+                        area = cv2.contourArea(cnt)
+                        if area < 700: continue
+                        
+                        x, y, w_cnt, h_cnt = cv2.boundingRect(cnt)
+                        cx, cy = x + w_cnt/2, y + h_cnt/2
+                        aspect_ratio = float(w_cnt) / h_cnt
+                        
+                        # FILTRADO ESPACIAL DINÁMICO
+                        # La conjuntiva DEBE estar cerca del iris, no perdida abajo
+                        dist_vertical = cy - iris_y
+                        dist_horizontal = abs(cx - wide/2)
+                        
+                        # Ventana estricta: mas de 0.5 radios pero menos de 2.5 radios
+                        if dist_vertical > iris_r * 0.4 and dist_vertical < iris_r * 2.5 and \
+                           dist_horizontal < wide * 0.35 and aspect_ratio > 1.3:
+                            
+                            # Puntuación basada en cercanía al iris y solidez
+                            score = area / (dist_vertical + 1)
+                            valid_blobs.append((cnt, score))
+                    
+                    if valid_blobs:
+                        # Seleccionamos la mancha más "conectada" al iris (superior en la ventana)
+                        best_cnt = max(valid_blobs, key=lambda b: b[1])[0]
+                        cv2.drawContours(final_mask, [best_cnt], -1, 255, -1)
+                        
                     return final_mask
 
                 mask_conjuntiva = heuristic_segmentation(img_original)

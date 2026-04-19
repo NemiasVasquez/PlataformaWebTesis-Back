@@ -92,9 +92,23 @@ def evaluar_imagen_individual(imagen):
         prob_anemia = probs[0][1].item()  # Clase 1 = Anemia
         pred = torch.argmax(probs, dim=1).item()
         
+    resultado_clase = "CON ANEMIA" if pred == 1 else "SIN ANEMIA"
+    
+    # Renombrar todas las carpetas 'SIN ANEMIA' al resultado real si es CON ANEMIA
+    if resultado_clase == "CON ANEMIA":
+        pasos = ['entrada', 'filtrada', 'segmentada', 'recortada', 'png', 'resize']
+        for paso in pasos:
+            ruta_paso_old = os.path.join(ruta_base, paso, 'SIN ANEMIA')
+            ruta_paso_new = os.path.join(ruta_base, paso, 'CON ANEMIA')
+            if os.path.exists(ruta_paso_old):
+                os.makedirs(os.path.dirname(ruta_paso_new), exist_ok=True)
+                if os.path.exists(ruta_paso_new):
+                    shutil.rmtree(ruta_paso_new)
+                os.rename(ruta_paso_old, ruta_paso_new)
+
     return {
         'valida': True,
         'directorio': f"media/pruebas/{nuevo_id}",
         'prediccion': pred,
-        'probable_clase': "Anemia" if pred == 1 else "Sin Anemia",
+        'probable_clase': "Con Anemia" if pred == 1 else "Sin Anemia",
     }

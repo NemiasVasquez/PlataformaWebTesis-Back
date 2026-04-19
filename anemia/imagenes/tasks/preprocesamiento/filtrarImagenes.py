@@ -30,21 +30,52 @@ def filtrar_conjuntiva(ruta_entrada, ruta_salida, ruta_no_filtrados, ruta_report
     contador_tamano_insuficiente = contador_sin_esclerotica = 0
 
     # Funciones auxiliares
-    def es_nitida(img, umbral=7):
+    def es_nitida(img, umbral_fft=12, umbral_lap=25):
+        # 1. Preparar imagen
         gris = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-        lap = cv2.Laplacian(gris, cv2.CV_64F)
-        return lap.var() > umbral
+        
+        # 2. Check de Frecuencias (FFT) - Detecta desenfoque global
+        f = np.fft.fft2(gris)
+        fshift = np.fft.fftshift(f)
+        magnitude_spectrum = 20 * np.log(np.abs(fshift) + 1)
+        mean_magnitude = np.mean(magnitude_spectrum)
+        
+        # 3. Check de Bordes (Laplacian) - Detecta bordes suaves
+        gris_soft = cv2.medianBlur(gris, 3)
+        lap_var = cv2.Laplacian(gris_soft, cv2.CV_64F).var()
+        
+        # Pasa si AMBOS son razonablemente buenos
+        return (mean_magnitude > umbral_fft) or (lap_var > umbral_lap)
+
+
+
 
     def ojo_abierto(img):
+        """
+        Detecta si el ojo está abierto buscando el iris.
+        Ajustado para permitir ojos mirando arriba o iris parciales.
+        """
         hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
-        mask_iris = cv2.inRange(hsv, np.array([0, 0, 0]), np.array([180, 255, 60]))
+        
+        # Aumentamos el rango de V (brillo) para detectar ojos claros o con reflejos
+        mask_iris = cv2.inRange(hsv, np.array([0, 0, 0]), np.array([180, 255, 75]))
+        
+        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
+        mask_iris = cv2.morphologyEx(mask_iris, cv2.MORPH_OPEN, kernel)
+        
         contornos, _ = cv2.findContours(mask_iris, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         for c in contornos:
-            if cv2.contourArea(c) > 100 and len(c) >= 4:
-                _, (MA, ma), _ = cv2.fitEllipse(c)
-                if 0.01 < MA / ma < 2:
-                    return True
+            area = cv2.contourArea(c)
+            if area > 300: # Un poco más permisivo con el tamaño
+                perimetro = cv2.arcLength(c, True)
+                if perimetro > 0:
+                    circularidad = (4 * np.pi * area) / (perimetro * perimetro)
+                    # Bajamos el umbral de circularidad (0.2) para permitir iris mirando a los lados
+                    if circularidad > 0.18:
+                        return True
         return False
+
+
 
     def forma_eliptica_detectada(mask):
         contornos, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
@@ -56,17 +87,30 @@ def filtrar_conjuntiva(ruta_entrada, ruta_salida, ruta_no_filtrados, ruta_report
         return False
 
     def contiene_conjuntiva(img):
+        """
+        Detecta si hay áreas con colores típicos de conjuntiva (rojos, rosas, naranjas suaves).
+        """
         hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
-        mask1 = cv2.inRange(hsv, np.array([0, 30, 50]), np.array([10, 255, 255]))
-        mask2 = cv2.inRange(hsv, np.array([160, 30, 50]), np.array([180, 255, 255]))
+        
+        # Rango para rojos/rosas en HSV (zona 1 y zona 2 del círculo de color)
+        mask1 = cv2.inRange(hsv, np.array([0, 50, 40]), np.array([12, 255, 255]))
+        mask2 = cv2.inRange(hsv, np.array([160, 50, 40]), np.array([180, 255, 255]))
         mask_red = cv2.bitwise_or(mask1, mask2)
-        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
+        
+        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (7, 7))
         mask_clean = cv2.morphologyEx(mask_red, cv2.MORPH_OPEN, kernel)
         mask_clean = cv2.morphologyEx(mask_clean, cv2.MORPH_CLOSE, kernel)
-        return np.count_nonzero(mask_clean) / (img.shape[0] * img.shape[1]) > 0.01 or forma_eliptica_detectada(mask_clean)
+        
+        porcentaje_rojo = np.count_nonzero(mask_clean) / (img.shape[0] * img.shape[1])
+        
+        # Si hay suficiente área roja o una forma compatible con la conjuntiva
+        return porcentaje_rojo > 0.005 or forma_eliptica_detectada(mask_clean)
 
-    def tiene_desenfoque(img, umbral=8):
-        return not es_nitida(img, umbral)
+
+    def tiene_desenfoque(img, umbral_fft=12, umbral_lap=25):
+        return not es_nitida(img, umbral_fft, umbral_lap)
+
+
 
     def tiene_tamano_suficiente(img, min_tamano=200):
         alto, ancho = img.shape[:2]
