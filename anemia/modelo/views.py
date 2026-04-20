@@ -61,5 +61,6 @@ def evaluar_imagen_anemia(request):
         "directorio_procesado": resultado['directorio'],
         "prediccion": resultado['prediccion'],
         "probable_clase": resultado['probable_clase'],
+        "categoria": resultado.get('categoria', 'SIN ANEMIA'),
     })
     

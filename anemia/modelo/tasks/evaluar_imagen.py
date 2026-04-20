@@ -111,4 +111,5 @@ def evaluar_imagen_individual(imagen):
         'directorio': f"media/pruebas/{nuevo_id}",
         'prediccion': pred,
         'probable_clase': "Con Anemia" if pred == 1 else "Sin Anemia",
+        'categoria': resultado_clase, # "CON ANEMIA" or "SIN ANEMIA"
     }

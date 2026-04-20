@@ -9,6 +9,7 @@ load_dotenv(dotenv_path)
 BASE_DIR = Path(__file__).resolve().parent.parent
 SECRET_KEY = 'django-insecure-3xu=h15n7gfktaus$s!0qs-6j89x(ck(pcs29&6ec7v%+o6klo'
 DEBUG = True
+ALLOWED_HOSTS = ['*']
 
 # Solo tu app personalizada (ej. 'modelo')
 INSTALLED_APPS = [
