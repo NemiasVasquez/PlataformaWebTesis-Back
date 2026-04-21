@@ -54,7 +54,7 @@ def evaluar_imagen_anemia(request):
             'error': 'Imagen no válida para el análisis',
             'alert': resultado['razon'],
             'directorio_procesado': resultado['directorio']
-        },status=500)
+        },status=400)
 
     return JsonResponse({
         "mensaje": "Evaluación realizada",

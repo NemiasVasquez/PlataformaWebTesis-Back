@@ -20,4 +20,4 @@ def redimensionar_imagenes(input_folder, output_folder, size=(150, 150)):
                 except Exception as e:
                     print(f"⚠️ Error con imagen {file}: {e}")
 
-    print("✅ Redimensionamiento completado.")
+    print("Redimensionamiento completado.")

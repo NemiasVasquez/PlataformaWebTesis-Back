@@ -52,28 +52,33 @@ def filtrar_conjuntiva(ruta_entrada, ruta_salida, ruta_no_filtrados, ruta_report
 
     def ojo_abierto(img):
         """
-        Detecta si el ojo está abierto buscando el iris.
-        Permisivo con ojos mirando hacia arriba o iris parcialmente cubiertos.
+        Detecta si el ojo está abierto buscando el iris o la pupila.
+        Mejorado para ser más robusto ante diferentes tonos de iris y sombras.
         """
         hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
+        gris = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
         
-        # Rango de oscuridad para captar Iris (incluye marrones, negros y sombras del iris)
-        mask_iris = cv2.inRange(hsv, np.array([0, 0, 0]), np.array([180, 255, 80]))
+        # 1. Buscar zonas oscuras (Iris/Pupila) en HSV y escala de grises
+        # Ampliamos un poco el rango de valor (V) para captar irises en sombra
+        mask_dark_hsv = cv2.inRange(hsv, np.array([0, 0, 0]), np.array([180, 255, 75]))
+        _, mask_dark_gray = cv2.threshold(gris, 65, 255, cv2.THRESH_BINARY_INV)
         
-        # Limpieza para ignorar vellos finos
+        mask_iris = cv2.bitwise_or(mask_dark_hsv, mask_dark_gray)
+        
+        # Limpieza morfológica para eliminar pestañas y ruido
         kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (7, 7))
         mask_iris = cv2.morphologyEx(mask_iris, cv2.MORPH_OPEN, kernel)
         
         contornos, _ = cv2.findContours(mask_iris, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        
         for c in contornos:
             area = cv2.contourArea(c)
-            # El iris es una masa oscura significativa
-            if area > 400: 
+            # El iris/pupila debe tener un tamaño mínimo pero no ser inmenso (sería una sombra grande)
+            if 350 < area < (img.shape[0] * img.shape[1] * 0.2): 
                 x, y, w, h = cv2.boundingRect(c)
                 aspect_ratio = float(w) / h
-                # Si no es demasiado alargado (como una pestaña horizontal o vertical) 
-                # y tiene masa, lo aceptamos como iris parcial
-                if 0.3 < aspect_ratio < 3.0:
+                # Un iris (incluso parcial) tiende a ser balanceado en aspecto
+                if 0.4 < aspect_ratio < 2.5:
                     return True
         return False
 
@@ -94,9 +99,9 @@ def filtrar_conjuntiva(ruta_entrada, ruta_salida, ruta_no_filtrados, ruta_report
         """
         hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
         
-        # Rango para rojos/rosas en HSV (zona 1 y zona 2 del círculo de color)
-        mask1 = cv2.inRange(hsv, np.array([0, 50, 40]), np.array([12, 255, 255]))
-        mask2 = cv2.inRange(hsv, np.array([160, 50, 40]), np.array([180, 255, 255]))
+        # Rango para rojos/rosas en HSV (saturacion mas baja para ojos palidos/anemicos)
+        mask1 = cv2.inRange(hsv, np.array([0, 20, 40]), np.array([20, 255, 255]))
+        mask2 = cv2.inRange(hsv, np.array([160, 20, 40]), np.array([180, 255, 255]))
         mask_red = cv2.bitwise_or(mask1, mask2)
         
         kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (7, 7))
@@ -172,12 +177,12 @@ def filtrar_conjuntiva(ruta_entrada, ruta_salida, ruta_no_filtrados, ruta_report
                 with open(ruta_reporte_txt, 'a', encoding='utf-8') as f:
                     f.write(f"{nombre_img} ({categoria}): {', '.join(razones)}\n")
 
-    print("\n📊 MÉTRICAS DE FILTRADO FINAL:")
-    print(f"🔢 Total imágenes procesadas: {contador_total}")
-    print(f"✅ Aceptadas: {contador_filtradas}")
-    print(f"❌ Rechazadas por ojo cerrado: {contador_sin_iris}")
-    print(f"❌ Rechazadas sin conjuntiva: {contador_sin_conjuntiva}")
-    print(f"❌ Rechazadas por desenfoque: {contador_desenfoque}")
-    print(f"❌ Rechazadas por tamaño: {contador_tamano_insuficiente}")
-    print(f"❌ Rechazadas por esclerótica: {contador_sin_esclerotica}")
-    print(f"📋 Reporte guardado en: {ruta_reporte_txt}")
+    print("\nMETRICAS DE FILTRADO FINAL:")
+    print(f"Total imagenes procesadas: {contador_total}")
+    print(f"Aceptadas: {contador_filtradas}")
+    print(f"Rechazadas por ojo cerrado: {contador_sin_iris}")
+    print(f"Rechazadas sin conjuntiva: {contador_sin_conjuntiva}")
+    print(f"Rechazadas por desenfoque: {contador_desenfoque}")
+    print(f"Rechazadas por tamano: {contador_tamano_insuficiente}")
+    print(f"Rechazadas por esclerotica: {contador_sin_esclerotica}")
+    print(f"Reporte guardado en: {ruta_reporte_txt}")

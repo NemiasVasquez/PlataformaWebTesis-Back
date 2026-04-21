@@ -44,14 +44,17 @@ def evaluar_imagen_individual(imagen):
     filtrar_conjuntiva(ruta_entrada, ruta_filtrada, ruta_no_filtrados, ruta_reporte)
 
     ruta_filtrada_sin_anemia = os.path.join(ruta_filtrada, 'SIN ANEMIA')
-    if not os.path.exists(ruta_filtrada_sin_anemia) or not os.listdir(ruta_filtrada_sin_anemia):
-        razon_rechazo = "Imagen no válida para el análisis"
+    num_filtrados = len(os.listdir(ruta_filtrada_sin_anemia)) if os.path.exists(ruta_filtrada_sin_anemia) else 0
+    print(f"DEBUG: Imagenes despues de filtrado: {num_filtrados}")
+
+    if num_filtrados == 0:
+        razon_rechazo = "Imagen rechazada por calidad (Iris/Nitidez/Color)"
         if os.path.exists(ruta_reporte):
             with open(ruta_reporte, encoding='utf-8') as f:
                 lineas = [l.strip() for l in f if l.strip()]
                 if len(lineas) > 1:
                     razon_rechazo = lineas[1]
-        shutil.rmtree(ruta_base, ignore_errors=True)  # 🧹 Eliminar carpeta si fue rechazada
+        print(f"DEBUG: Fallo en filtrado. Razon: {razon_rechazo}")
         return {
             'valida': False,
             'razon': razon_rechazo,
@@ -59,23 +62,28 @@ def evaluar_imagen_individual(imagen):
         }
 
     segmentar_y_recortar_conjuntiva(ruta_filtrada, ruta_segmentada, ruta_recortada, ruta_png)
+    
+    num_pngs = len(list(Path(os.path.join(ruta_png, 'SIN ANEMIA')).glob('*.png'))) if os.path.exists(os.path.join(ruta_png, 'SIN ANEMIA')) else 0
+    print(f"DEBUG: Imagenes segmentadas (PNG): {num_pngs}")
+
     redimensionar_imagenes(ruta_png, ruta_resize, size=(IMG_WIDTH, IMG_HEIGHT))
 
     final_imgs = list(Path(os.path.join(ruta_resize, 'SIN ANEMIA')).glob('*.png'))
+    print(f"DEBUG: Imagenes finales listas: {len(final_imgs)}")
+
     if not final_imgs:
-        shutil.rmtree(ruta_base, ignore_errors=True)
+        print(f"DEBUG: Fallo. No hay imagenes tras segmentacion y resize.")
         return {
             'valida': False,
-            'razon': 'No se encontró imagen tras procesamiento',
+            'razon': 'Segmentacion no detectó tejido palpebral. Intenta con mejor iluminación.',
             'directorio': f"media/pruebas/{nuevo_id}"
         }
 
     img = cv2.imread(str(final_imgs[0]), cv2.IMREAD_UNCHANGED)
     if img is None:
-        shutil.rmtree(ruta_base, ignore_errors=True)
         return {
             'valida': False,
-            'razon': 'Error al leer imagen final',
+            'razon': 'Error critico leyendo archivo procesado',
             'directorio': f"media/pruebas/{nuevo_id}"
         }
 
