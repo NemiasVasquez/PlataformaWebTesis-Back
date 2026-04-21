@@ -65,20 +65,19 @@ def filtrar_conjuntiva(ruta_entrada, ruta_salida, ruta_no_filtrados, ruta_report
         
         mask_iris = cv2.bitwise_or(mask_dark_hsv, mask_dark_gray)
         
-        # Limpieza morfológica para eliminar pestañas y ruido
-        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (7, 7))
+        # Limpieza morfológica suave
+        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
         mask_iris = cv2.morphologyEx(mask_iris, cv2.MORPH_OPEN, kernel)
         
         contornos, _ = cv2.findContours(mask_iris, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         
         for c in contornos:
             area = cv2.contourArea(c)
-            # El iris/pupila debe tener un tamaño mínimo pero no ser inmenso (sería una sombra grande)
-            if 350 < area < (img.shape[0] * img.shape[1] * 0.2): 
+            # Ser más permisivo con el tamaño y la forma (iris parcial al mirar arriba)
+            if 150 < area < (img.shape[0] * img.shape[1] * 0.25): 
                 x, y, w, h = cv2.boundingRect(c)
                 aspect_ratio = float(w) / h
-                # Un iris (incluso parcial) tiende a ser balanceado en aspecto
-                if 0.4 < aspect_ratio < 2.5:
+                if 0.3 < aspect_ratio < 3.5:
                     return True
         return False
 
