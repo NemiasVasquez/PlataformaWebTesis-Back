@@ -44,8 +44,8 @@ class ConjuntivaExtractor:
         mask = np.zeros((h, w), dtype=np.uint8)
         
         # Ojo está aquí. No buscar en orejas.
-        w_box = int(radius * 4.5)
-        h_box = int(radius * 3.5)
+        w_box = int(radius * 8)
+        h_box = int(radius * 4)
         
         y_start = max(0, cy - int(radius * 0.5)) 
         y_end = min(h, cy + h_box)
