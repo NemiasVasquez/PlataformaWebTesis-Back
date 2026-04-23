@@ -37,6 +37,7 @@ def _crear_carpetas():
         os.getenv("RUTA_SEGMENTADAS"),
         os.getenv("RUTA_RECORTADAS"),
         os.getenv("RUTA_PNG"),
+        os.getenv("RUTA_AREA"),
         os.getenv("RUTA_PNG_RESIZE"),
         os.getenv("RUTA_ENTRADA"),
         os.getenv("RUTA_SALIDA"),
@@ -73,12 +74,14 @@ def _balancear():
 def _segmentar():
     entrada = os.path.join(settings.BASE_DIR, os.getenv("RUTA_BALANCEADAS"))
     salida_segmentadas = os.path.join(settings.BASE_DIR, os.getenv("RUTA_SEGMENTADAS"))
-    salida_recortadas = os.path.join(settings.BASE_DIR, os.getenv("RUTA_RECORTADAS"))
-    salida_png = os.path.join(settings.BASE_DIR, os.getenv("RUTA_PNG"))
+    salida_recortadas  = os.path.join(settings.BASE_DIR, os.getenv("RUTA_RECORTADAS"))
+    salida_png         = os.path.join(settings.BASE_DIR, os.getenv("RUTA_PNG"))
+    salida_area        = os.path.join(settings.BASE_DIR, os.getenv("RUTA_AREA"))
     limpiar_carpeta(salida_segmentadas)
     limpiar_carpeta(salida_recortadas)
     limpiar_carpeta(salida_png)
-    segmentar_y_recortar_conjuntiva(entrada, salida_segmentadas, salida_recortadas, salida_png)
+    limpiar_carpeta(salida_area)
+    segmentar_y_recortar_conjuntiva(entrada, salida_segmentadas, salida_recortadas, salida_png, salida_area)
 
 def _redimensionar():
     input_folder = os.path.join(settings.BASE_DIR, os.getenv("RUTA_PNG"))
