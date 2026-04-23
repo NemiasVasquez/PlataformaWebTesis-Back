@@ -30,22 +30,43 @@ def filtrar_conjuntiva(ruta_entrada, ruta_salida, ruta_no_filtrados, ruta_report
     contador_tamano_insuficiente = contador_sin_esclerotica = 0
 
     # Funciones auxiliares
-    def es_nitida(img, umbral_fft=12, umbral_lap=25):
-        # 1. Preparar imagen
+    def es_nitida(img, umbral_lap=10, umbral_tenengrad=8, umbral_hf_ratio=0.005):
+        """
+        Triple verificación de nitidez:
+        1. Laplacian variance: sensible a bordes generales.
+        2. Tenengrad (Sobel): detecta gradientes locales, muy sensible al foco óptico.
+        3. Ratio de alta frecuencia (FFT): imágenes con bokeh/desenfoque óptico tienen
+           muy poca energía en frecuencias altas respecto al total.
+        """
         gris = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
         
-        # 2. Check de Frecuencias (FFT) - Detecta desenfoque global
+        # --- Métrica 1: Varianza del Laplaciano ---
+        lap_var = cv2.Laplacian(gris, cv2.CV_64F).var()
+        
+        # --- Métrica 2: Tenengrad (energía de gradientes Sobel) ---
+        sobelx = cv2.Sobel(gris, cv2.CV_64F, 1, 0, ksize=3)
+        sobely = cv2.Sobel(gris, cv2.CV_64F, 0, 1, ksize=3)
+        tenengrad = np.sqrt(sobelx**2 + sobely**2).mean()
+        
+        # --- Métrica 3: Ratio de energía en altas frecuencias (FFT) ---
         f = np.fft.fft2(gris)
         fshift = np.fft.fftshift(f)
-        magnitude_spectrum = 20 * np.log(np.abs(fshift) + 1)
-        mean_magnitude = np.mean(magnitude_spectrum)
+        mag = np.abs(fshift)
+        h, w = gris.shape
+        # Máscara para zona central (bajas frecuencias) - 20% del espectro
+        cy, cx = h // 2, w // 2
+        r = int(min(h, w) * 0.10)
+        y_grid, x_grid = np.ogrid[:h, :w]
+        mask_low = (y_grid - cy)**2 + (x_grid - cx)**2 <= r**2
+        energia_total = np.sum(mag) + 1e-8
+        energia_alta = np.sum(mag[~mask_low])
+        hf_ratio = energia_alta / energia_total
         
-        # 3. Check de Bordes (Laplacian) - Detecta bordes suaves
-        gris_soft = cv2.medianBlur(gris, 3)
-        lap_var = cv2.Laplacian(gris_soft, cv2.CV_64F).var()
+        pasa_lap = lap_var > umbral_lap
+        pasa_tenengrad = tenengrad > umbral_tenengrad
+        pasa_hf = hf_ratio > umbral_hf_ratio
         
-        # Pasa si AMBOS son razonablemente buenos
-        return (mean_magnitude > umbral_fft) or (lap_var > umbral_lap)
+        return pasa_lap and pasa_tenengrad and pasa_hf
 
 
 
@@ -113,8 +134,8 @@ def filtrar_conjuntiva(ruta_entrada, ruta_salida, ruta_no_filtrados, ruta_report
         return porcentaje_rojo > 0.005 or forma_eliptica_detectada(mask_clean)
 
 
-    def tiene_desenfoque(img, umbral_fft=12, umbral_lap=25):
-        return not es_nitida(img, umbral_fft, umbral_lap)
+    def tiene_desenfoque(img):
+        return not es_nitida(img)
 
 
 
