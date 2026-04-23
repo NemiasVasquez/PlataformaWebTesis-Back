@@ -44,8 +44,8 @@ class ConjuntivaExtractor:
         mask = np.zeros((h, w), dtype=np.uint8)
         
         # Ojo está aquí. No buscar en orejas.
-        w_box = int(radius * 8)
-        h_box = int(radius * 4)
+        w_box = int(radius * 10)
+        h_box = int(radius * 8)
         
         y_start = max(0, cy - int(radius * 0.5)) 
         y_end = min(h, cy + h_box)
@@ -82,7 +82,7 @@ class ConjuntivaExtractor:
 
         # 5. LÍMITE PIEDRA (No subir)
         # Carne roja solo abajo del iris. Arriba es prohibido.
-        y_pared = ay + int(radius * 0.2)
+        y_pared = ay + int(radius * 0.8)
         combined[0:y_pared, :] = 0
         
         # --- MORFOLOGÍA ORIENTADA A MEDIALUNA ---
@@ -191,6 +191,66 @@ class ConjuntivaExtractor:
         _, mask = cv2.threshold(mask, 127, 255, cv2.THRESH_BINARY)
         return mask
 
+    def cerrar_forma_medialuna(self, mask):
+        """
+        CAVERNICOLA ESCANEAR COLUMNA POR COLUMNA cada 20px en X.
+        Construir perfil de la forma (tope y fondo de la luna en cada X).
+        Si hay hueco (columna sin blanco entre dos activas), interpolar borde
+        y dibujar el puente siguiendo la curva natural de la medialuna.
+        Si la forma se estrecha y vuelve a abrirse (separacion), tambien cerrar.
+        """
+        if np.count_nonzero(mask) == 0:
+            return mask
+
+        h, w = mask.shape[:2]
+        paso = 20  # Cada cuanto picar en X
+
+        # --- PASO 1: Construir perfil (top, bottom) para cada X activo ---
+        perfil = {}  # x -> (y_top, y_bot)
+        for x in range(0, w, paso):
+            col = mask[:, x]
+            ys = np.where(col > 0)[0]
+            if len(ys) > 0:
+                perfil[x] = (int(ys[0]), int(ys[-1]))
+
+        if len(perfil) < 2:
+            return mask
+
+        xs_activos = sorted(perfil.keys())
+        nueva_mask = mask.copy()
+
+        # --- PASO 2: Detectar huecos (columnas sin blanco entre dos activas) ---
+        for k in range(len(xs_activos) - 1):
+            x1 = xs_activos[k]
+            x2 = xs_activos[k + 1]
+
+            gap = x2 - x1
+            if gap <= paso:
+                continue  # Sin hueco, columnas consecutivas normales
+
+            # Hay salto: columnas intermedias sin blanco
+            top1, bot1 = perfil[x1]
+            top2, bot2 = perfil[x2]
+
+            print(f"DEBUG LUNA: hueco en X={x1}->{x2} (gap={gap}px), interpolando borde")
+
+            # Interpolar linealmente top y bottom para cubrir el hueco
+            for xi in range(x1, x2 + 1):
+                t = (xi - x1) / max(gap, 1)
+                top_i = int(top1 + t * (top2 - top1))
+                bot_i = int(bot1 + t * (bot2 - bot1))
+                top_i = max(0, min(h - 1, top_i))
+                bot_i = max(0, min(h - 1, bot_i))
+                # Dibujar solo los bordes (trazo de cierre, no rellenar todo)
+                nueva_mask[top_i, xi] = 255
+                nueva_mask[bot_i, xi] = 255
+
+        # --- PASO 3: Cerrar morfologicamente para suavizar el trazo unido ---
+        kernel_cierre = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (9, 5))
+        nueva_mask = cv2.morphologyEx(nueva_mask, cv2.MORPH_CLOSE, kernel_cierre)
+
+        return nueva_mask
+
 def segmentar_y_recortar_conjuntiva(ruta_entrada, ruta_salida_segmentadas, ruta_salida_recortadas, ruta_salida_png):
     extractor = ConjuntivaExtractor()
     categorias = ['SIN ANEMIA', 'CON ANEMIA']
@@ -214,7 +274,10 @@ def segmentar_y_recortar_conjuntiva(ruta_entrada, ruta_salida_segmentadas, ruta_
             raw_mask = extractor.find_medialuna_by_contrast(img, win_mask, anchor, radius)
             final_mask = extractor.polish_final(raw_mask)
             
-            if np.count_nonzero(final_mask) == 0: 
+            # --- CIERRE MEDIALUNA: escanear perfil X/Y y cerrar huecos naturalmente ---
+            final_mask = extractor.cerrar_forma_medialuna(final_mask)
+
+            if np.count_nonzero(final_mask) == 0:
                 print(f"DEBUG: Mascara vacia para {f}. No se encontro 'medialuna' con criterios actuales.")
                 continue
             
