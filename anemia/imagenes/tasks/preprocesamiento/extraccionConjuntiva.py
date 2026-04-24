@@ -57,20 +57,20 @@ class ConjuntivaExtractor:
         cx, cy = center
         mask = np.zeros((h, w), dtype=np.uint8)
         
-        # Ojo está aquí. No buscar en orejas.
+        # Ojo está aquí. No buscar en orejas ni pómulo bajo.
         w_box = int(radius * 10)
-        h_box = int(radius * 8)
         
         y_start_factor = float(os.getenv("SEG_SEARCH_Y_START_FACTOR", 0.5))
         y_start = max(0, cy - int(radius * y_start_factor)) 
-        y_end = min(h, cy + h_box)
+        # La conjuntiva no baja más de 3 radios del centro del iris
+        y_end = min(h, cy + int(radius * 3.5))
         x_start = max(0, cx - w_box // 2)
         x_end = min(w, cx + w_box // 2)
         
         cv2.rectangle(mask, (x_start, y_start), (x_end, y_end), 255, -1)
         return mask, y_start, y_end
 
-    def find_medialuna_by_contrast(self, img, window_mask, anchor, radius):
+    def find_medialuna_by_contrast(self, img, window_mask, anchor, radius, rojo_offset=0):
         lab = cv2.cvtColor(img, cv2.COLOR_BGR2LAB)
         L, a_ch, b_ch = cv2.split(lab)
         (ax, ay) = anchor 
@@ -85,9 +85,9 @@ class ConjuntivaExtractor:
         _, mask_blanco = cv2.threshold(L, blanco_l, 255, cv2.THRESH_BINARY)
         mask_blanco = cv2.morphologyEx(mask_blanco, cv2.MORPH_CLOSE, np.ones((11,11), np.uint8))
         
-        # 3. BUSCAR CARNE ROJA (Mucosa)
+        # 3. BUSCAR CARNE ROJA (Mucosa) con offset adaptativo
         a_fuerte = self.clahe.apply(a_ch)
-        rojo_a = int(os.getenv("SEG_ROJO_A_THRES", 138))
+        rojo_a = int(os.getenv("SEG_ROJO_A_THRES", 138)) - rojo_offset
         _, mask_rojo = cv2.threshold(a_fuerte, rojo_a, 255, cv2.THRESH_BINARY)
 
         # 4. LIMPIAR MUCHO
@@ -110,6 +110,8 @@ class ConjuntivaExtractor:
 
         contours, _ = cv2.findContours(combined, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         if not contours:
+            if rojo_offset == 0:
+                return self.find_medialuna_by_contrast(img, window_mask, anchor, radius, rojo_offset=15)
             return np.zeros_like(L)
 
         best_mask = np.zeros_like(L)
@@ -149,6 +151,10 @@ class ConjuntivaExtractor:
             solidity = float(area) / cv2.contourArea(hull) if cv2.contourArea(hull) > 0 else 0
             score *= (1.0 - abs(solidity - solidity_target))
             
+            # Penalización extra si el contorno es exageradamente ancho (ej. pliegue de piel)
+            if w > radius * 5:
+                score *= 0.05
+            
             if score > best_score:
                 best_score = score
                 best_cnt = cnt
@@ -184,6 +190,11 @@ class ConjuntivaExtractor:
                 best_mask = np.zeros_like(L)
                 cv2.drawContours(best_mask, [ganador], -1, 255, -1)
 
+        # REINTENTO SI EL AREA FINAL ES MUY POBRE (Pálida o Cortada)
+        area_final = np.count_nonzero(best_mask)
+        if area_final < int(os.getenv("SEG_MIN_AREA_PALIDA", 4500)) and rojo_offset == 0:
+            return self.find_medialuna_by_contrast(img, window_mask, anchor, radius, rojo_offset=15)
+
         return best_mask
 
     def polish_final(self, mask):
@@ -197,49 +208,73 @@ class ConjuntivaExtractor:
         _, mask = cv2.threshold(mask, 127, 255, cv2.THRESH_BINARY)
         return mask
 
-    def cerrar_forma_medialuna(self, mask):
+    def cerrar_forma_medialuna(self, mask, anchor=None, radius=None):
+        """
+        CAVERNÍCOLA ANATÓMICO: Sigue la forma real pero aniquila picos.
+        Conecta los pedazos sueltos llenando huecos blancos con líneas rectas, 
+        y luego pasa rodillo (Gaussian Blur) para que fluya con el ojo.
+        """
         if np.count_nonzero(mask) == 0:
             return mask
 
         h, w = mask.shape[:2]
-        paso = int(os.getenv("SEG_CLOSE_STEP", 20))
-
-        perfil = {}  # x -> (y_top, y_bot)
-        for x in range(0, w, paso):
-            col = mask[:, x]
+        cnts, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        if not cnts:
+            return mask
+            
+        cnt_mayor = max(cnts, key=cv2.contourArea)
+        x_bb, y_bb, bw, bh = cv2.boundingRect(cnt_mayor)
+        
+        # 1. Encontrar perfiles reales (techo y piso)
+        xs = []
+        y_tops = []
+        y_bots = []
+        
+        for cx in range(x_bb, x_bb + bw):
+            col = mask[:, cx]
             ys = np.where(col > 0)[0]
             if len(ys) > 0:
-                perfil[x] = (int(ys[0]), int(ys[-1]))
+                xs.append(cx)
+                y_tops.append(ys[0])
+                y_bots.append(ys[-1])
 
-        if len(perfil) < 2:
+        if len(xs) < 10:
             return mask
 
-        xs_activos = sorted(perfil.keys())
-        nueva_mask = mask.copy()
-
-        for k in range(len(xs_activos) - 1):
-            x1 = xs_activos[k]
-            x2 = xs_activos[k + 1]
-
-            gap = x2 - x1
-            if gap <= paso:
-                continue 
-
-            top1, bot1 = perfil[x1]
-            top2, bot2 = perfil[x2]
-
-            for xi in range(x1, x2 + 1):
-                t = (xi - x1) / max(gap, 1)
-                top_i = int(top1 + t * (top2 - top1))
-                bot_i = int(bot1 + t * (bot2 - bot1))
-                top_i = max(0, min(h - 1, top_i))
-                bot_i = max(0, min(h - 1, bot_i))
-                nueva_mask[top_i, xi] = 255
-                nueva_mask[bot_i, xi] = 255
-
-        kernel_cierre = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (9, 5))
-        nueva_mask = cv2.morphologyEx(nueva_mask, cv2.MORPH_CLOSE, kernel_cierre)
-
+        # 2. Llenar huecos pálidos por donde se perdió el color
+        x_min, x_max = min(xs), max(xs)
+        full_xs = np.arange(x_min, x_max + 1)
+        y_tops_interp = np.interp(full_xs, xs, y_tops).astype(np.float32)
+        y_bots_interp = np.interp(full_xs, xs, y_bots).astype(np.float32)
+        
+        # 3. Suavizar picos para que sea un arco natural sin formas inventadas
+        ventana = max(5, int((x_max - x_min) * 0.15))
+        if ventana % 2 == 0: ventana += 1
+        
+        y_tops_smooth = cv2.GaussianBlur(y_tops_interp.reshape(1, -1), (ventana, 1), 0).flatten()
+        y_bots_smooth = cv2.GaussianBlur(y_bots_interp.reshape(1, -1), (ventana, 1), 0).flatten()
+        
+        nueva_mask = np.zeros_like(mask)
+        
+        # 4. Pintar forma limpia
+        for i, cx in enumerate(full_xs):
+            yt = int(y_tops_smooth[i])
+            yb = int(y_bots_smooth[i])
+            
+            yt = max(0, min(h - 1, yt))
+            yb = max(0, min(h - 1, yb))
+            
+            if yb >= yt:
+                cv2.line(nueva_mask, (cx, yt), (cx, yb), 255, 1)
+                
+        # 5. Cortar rebalses al iris (Atenuado: dejamos que el color natural defina, sin cortes duros bruscos)
+        # El recorte elíptico brusco fue removido para no cortar esclerótida ni conjuntiva válida.
+        # Si el usuario quiere seguir fiel al ojo, el suavizado de y_tops_smooth ya hizo el trabajo guiado por el contraste.
+            
+        # 6. Eliminar bordes de sierra residuales
+        kernel_suave = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (7, 7))
+        nueva_mask = cv2.morphologyEx(nueva_mask, cv2.MORPH_OPEN, kernel_suave)
+        
         return nueva_mask
 
 def segmentar_y_recortar_conjuntiva(ruta_entrada, ruta_salida_segmentadas, ruta_salida_recortadas, ruta_salida_png, ruta_salida_area=None):
@@ -267,7 +302,7 @@ def segmentar_y_recortar_conjuntiva(ruta_entrada, ruta_salida_segmentadas, ruta_
             raw_mask = extractor.find_medialuna_by_contrast(img, win_mask, anchor, radius)
             final_mask = extractor.polish_final(raw_mask)
             
-            final_mask = extractor.cerrar_forma_medialuna(final_mask)
+            final_mask = extractor.cerrar_forma_medialuna(final_mask, anchor, radius)
 
             if np.count_nonzero(final_mask) == 0:
                 print(f"DEBUG: Mascara vacia para {f}. No se encontro 'medialuna' con criterios actuales.")

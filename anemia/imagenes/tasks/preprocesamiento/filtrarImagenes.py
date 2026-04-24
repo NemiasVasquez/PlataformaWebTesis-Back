@@ -19,6 +19,8 @@ def filtrar_conjuntiva(ruta_entrada, ruta_salida, ruta_no_filtrados, ruta_report
         "Tamaño insuficiente": "Tamaño insuficiente",
         "No se detecta esclerótica": "Sin esclerótica",
         "Area conjuntiva insuficiente (muy pequeña o mala forma)": "Area insuficiente",
+        "Posición conjuntiva incorrecta (no debajo del ojo)": "Posicion incorrecta",
+        "Pestañas tapando la conjuntiva": "Bloqueo pestanas",
     }
 
     for categoria in categorias:
@@ -37,6 +39,7 @@ def filtrar_conjuntiva(ruta_entrada, ruta_salida, ruta_no_filtrados, ruta_report
     contador_sin_conjuntiva = contador_desenfoque = 0
     contador_tamano_insuficiente = contador_sin_esclerotica = 0
     contador_area_insuficiente = 0
+    contador_mala_posicion = contador_pestanas = 0
 
     # -------------------------------------------------------------------------
     # Leer umbrales desde .env (con valores actuales como fallback)
@@ -155,13 +158,16 @@ def filtrar_conjuntiva(ruta_entrada, ruta_salida, ruta_no_filtrados, ruta_report
         win_mask, _, _ = extractor.get_search_window(img, anchor, radius)
         raw_mask = extractor.find_medialuna_by_contrast(img, win_mask, anchor, radius)
         final_mask = extractor.polish_final(raw_mask)
-        final_mask = extractor.cerrar_forma_medialuna(final_mask)
+        final_mask = extractor.cerrar_forma_medialuna(final_mask, anchor, radius)
 
         pixeles_conjuntiva = np.count_nonzero(final_mask)
         porcentaje = pixeles_conjuntiva / area_img
         encontrada = pixeles_conjuntiva > 0
 
         forma_valida = False
+        posicion_valida = False
+        pestanas_ok = True
+        
         if encontrada:
             cnts, _ = cv2.findContours(final_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
             if cnts:
@@ -169,8 +175,27 @@ def filtrar_conjuntiva(ruta_entrada, ruta_salida, ruta_no_filtrados, ruta_report
                 bx, by, bw, bh = cv2.boundingRect(cnt_mayor)
                 aspect = bw / max(bh, 1)
                 forma_valida = (aspect >= CONJUNTIVA_MIN_ASPECT_RATIO) and (bw >= w * CONJUNTIVA_MIN_ANCHO_FRACCION)
+                
+                # Validar posición (debe estar central y debajo del ojo)
+                cx_ojo, cy_ojo = anchor
+                cx_conj = bx + bw / 2
+                
+                # Está debajo o casi a la altura del centro
+                esta_debajo = (by + bh / 2) > (cy_ojo - radius * 0.5)
+                # Alineado horizontalmente con el centro del ojo (no es un pedacito en el extremo lejos)
+                alineada = abs(cx_ojo - cx_conj) < (radius * 2.0) 
+                
+                posicion_valida = esta_debajo and alineada
 
-        return encontrada, porcentaje, final_mask, forma_valida
+                # Validar pestañas (Píxeles excesivamente negros dentro de la conjuntiva)
+                lab = cv2.cvtColor(img, cv2.COLOR_BGR2LAB)
+                l_mask = lab[:, :, 0][final_mask > 0]
+                if len(l_mask) > 0:
+                    pct_oscuro = np.sum(l_mask < 50) / len(l_mask)
+                    max_pestanas = float(os.getenv("CONJUNTIVA_MAX_PESTANAS_PCT", 0.08))
+                    pestanas_ok = pct_oscuro <= max_pestanas
+
+        return encontrada, porcentaje, final_mask, forma_valida, posicion_valida, pestanas_ok
 
     # -------------------------------------------------------------------------
     # Procesamiento principal
@@ -193,10 +218,12 @@ def filtrar_conjuntiva(ruta_entrada, ruta_salida, ruta_no_filtrados, ruta_report
             pasa_esclerotica = contiene_esclerotica(img)
 
             # conjuntiva_valida primero: necesitamos la mascara para es_nitida
-            conjuntiva_encontrada, pct_area, mascara, forma_valida = conjuntiva_valida(img)
+            conjuntiva_encontrada, pct_area, mascara, forma_valida, posicion_valida, pestanas_ok = conjuntiva_valida(img)
             pasa_conjuntiva = conjuntiva_encontrada
             pasa_area       = pct_area >= CONJUNTIVA_MIN_AREA_PCT
             pasa_forma      = forma_valida
+            pasa_posicion   = posicion_valida
+            pasa_pestanas   = pestanas_ok
 
             # Nitidez evaluada tambien sobre la mascara real de conjuntiva
             pasa_desenfoque = es_nitida(img, mask_conjuntiva=mascara)
@@ -223,8 +250,14 @@ def filtrar_conjuntiva(ruta_entrada, ruta_salida, ruta_no_filtrados, ruta_report
             if pasa_conjuntiva and pasa_area and not pasa_forma:
                 razones.append("Area conjuntiva insuficiente (muy pequeña o mala forma)")
                 contador_area_insuficiente += 1
+            if pasa_conjuntiva and pasa_area and pasa_forma and not pasa_posicion:
+                razones.append("Posición conjuntiva incorrecta (no debajo del ojo)")
+                contador_mala_posicion += 1
+            if pasa_conjuntiva and pasa_area and pasa_forma and pasa_posicion and not pasa_pestanas:
+                razones.append("Pestañas tapando la conjuntiva")
+                contador_pestanas += 1
 
-            if all([pasa_iris, pasa_conjuntiva, pasa_area, pasa_forma,
+            if all([pasa_iris, pasa_conjuntiva, pasa_area, pasa_forma, pasa_posicion, pasa_pestanas,
                     pasa_desenfoque, pasa_tamano, pasa_esclerotica]):
                 shutil.copy(ruta_img, os.path.join(ruta_salida, categoria, nombre_img))
                 contador_filtradas += 1
