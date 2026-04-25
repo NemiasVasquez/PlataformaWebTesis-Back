@@ -13,4 +13,5 @@ urlpatterns = [
     path('ejecutar_todo/', views.ejecutar_todo, name='ejecutar-todo'),
     path('listar_imagenes/', views.listar_imagenes, name='listar-imagenes'),
     path('explorar/', views.explorar_carpetas, name='explorar-carpetas'),
+    path('mover_archivo/', views.mover_archivo, name='mover-archivo'),
 ]

@@ -222,3 +222,60 @@ def explorar_carpetas(request):
             "total_pages": (total_files + page_size - 1) // page_size if total_files > 0 else 0
         }
     })
+
+def mover_archivo(request):
+    """
+    CAMIÓN DE BASURA CAVERNÍCOLA: Mueve a no_filtradas.
+    Limpia todas las carpetas donde esté la imagen con el mismo nombre.
+    """
+    if request.method == 'POST':
+        import json
+        try:
+            data = json.loads(request.body)
+            nombre_archivo = data.get('nombre_archivo')
+            categoria = data.get('categoria') 
+            razon_rechazo = data.get('razon_rechazo')
+            
+            if not all([nombre_archivo, categoria, razon_rechazo]):
+                return JsonResponse({"error": "Faltan datos (nombre, categoria o razon)"}, status=400)
+
+            # Carpetas de cuevas limpias
+            carpetas_aceptadas = [
+                os.getenv("RUTA_SALIDA"),
+                os.getenv("RUTA_BALANCEADAS"),
+                os.getenv("RUTA_SEGMENTADAS"),
+                os.getenv("RUTA_RECORTADAS"),
+                os.getenv("RUTA_PNG"),
+                os.getenv("RUTA_AREA"),
+                os.getenv("RUTA_PNG_RESIZE")
+            ]
+            
+            ruta_destino_base = os.path.join(settings.BASE_DIR, os.getenv("RUTA_NO_FILTRADOS"), categoria, razon_rechazo)
+            os.makedirs(ruta_destino_base, exist_ok=True)
+
+            encontrado = False
+            basename = os.path.splitext(nombre_archivo)[0]
+
+            for folder in carpetas_aceptadas:
+                if not folder: continue
+                # La mayoría tiene subcarpetas por categoría
+                ruta_cat = os.path.join(settings.BASE_DIR, folder, categoria)
+                
+                # Intentar con extensiones comunes por si cambió a .png
+                for ext in ['.jpeg', '.jpg', '.png']:
+                    test_path = os.path.join(ruta_cat, basename + ext)
+                    if os.path.exists(test_path):
+                        if not encontrado:
+                            shutil.move(test_path, os.path.join(ruta_destino_base, basename + ext))
+                            encontrado = True
+                        else:
+                            os.remove(test_path)
+            
+            if encontrado:
+                return JsonResponse({"mensaje": "Imagen desterrada a no_filtradas"})
+            return JsonResponse({"error": "No se encontró la imagen en Carpetas Filtradas"}, status=404)
+            
+        except Exception as e:
+            return JsonResponse({"error": str(e)}, status=500)
+            
+    return JsonResponse({"error": "Piedra solo acepta POST"}, status=405)
