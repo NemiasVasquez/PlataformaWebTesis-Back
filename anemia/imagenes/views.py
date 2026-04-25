@@ -63,22 +63,37 @@ def explorar_carpetas(request):
     page_size = int(request.GET.get('page_size', 16))
     
     items = os.listdir(target_dir)
-    folders = [i for i in items if os.path.isdir(os.path.join(target_dir, i))]
+    folders_info = []
+    for d in sorted([i for i in items if os.path.isdir(os.path.join(target_dir, i))]):
+        count = len([f for f in os.listdir(os.path.join(target_dir, d)) if os.path.isfile(os.path.join(target_dir, d, f))])
+        folders_info.append({"name": d, "count": count})
+
     files_info = []
-    
     for f in items:
         f_path = os.path.join(target_dir, f)
         if os.path.isfile(f_path) and f.lower().endswith(('.png', '.jpg', '.jpeg')):
             media_rel = os.path.relpath(f_path, settings.MEDIA_ROOT)
             url = f"{settings.MEDIA_URL}{media_rel.replace(os.sep, '/')}"
-            files_info.append({"name": f, "url": url, "size": f"{round(os.path.getsize(f_path)/1024, 1)} KB"})
+            size_kb = round(os.path.getsize(f_path)/1024, 1)
+            
+            # Obtener dimensiones
+            w, h = 0, 0
+            try:
+                img_tmp = cv2.imread(f_path)
+                if img_tmp is not None: h, w = img_tmp.shape[:2]
+            except: pass
+            
+            files_info.append({
+                "name": f, "url": url, "size": f"{size_kb} KB",
+                "width": w, "height": h, "resolution": f"{w}x{h}"
+            })
 
     files_info.sort(key=lambda x: x['name'])
     start, end = (page-1)*page_size, page*page_size
     
     return JsonResponse({
         "current_path": rel_path,
-        "folders": sorted(folders),
+        "folders": folders_info,
         "files": files_info[start:end],
         "pagination": {"total": len(files_info), "page": page, "total_pages": (len(files_info)+page_size-1)//page_size}
     })
