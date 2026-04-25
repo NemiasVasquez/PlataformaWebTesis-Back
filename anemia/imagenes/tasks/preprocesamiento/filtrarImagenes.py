@@ -45,11 +45,11 @@ def filtrar_conjuntiva(ruta_entrada, ruta_salida, ruta_no_filtrados, ruta_report
     # Leer umbrales desde .env (con valores actuales como fallback)
     # -------------------------------------------------------------------------
     # --- Nitidez ---
-    NITIDEZ_UMBRAL_LAP           = float(os.getenv("NITIDEZ_UMBRAL_LAP",           10))
-    NITIDEZ_UMBRAL_TENENGRAD     = float(os.getenv("NITIDEZ_UMBRAL_TENENGRAD",     10))
-    NITIDEZ_UMBRAL_HF_RATIO      = float(os.getenv("NITIDEZ_UMBRAL_HF_RATIO",      0.01))
-    NITIDEZ_UMBRAL_VMLAP_CENTRO  = float(os.getenv("NITIDEZ_UMBRAL_VMLAP_CENTRO",  10))
-    NITIDEZ_UMBRAL_VMLAP_MASCARA = float(os.getenv("NITIDEZ_UMBRAL_VMLAP_MASCARA", 10))
+    NITIDEZ_UMBRAL_LAP           = float(os.getenv("NITIDEZ_UMBRAL_LAP",           3))
+    NITIDEZ_UMBRAL_TENENGRAD     = float(os.getenv("NITIDEZ_UMBRAL_TENENGRAD",     3))
+    NITIDEZ_UMBRAL_HF_RATIO      = float(os.getenv("NITIDEZ_UMBRAL_HF_RATIO",      0.005))
+    NITIDEZ_UMBRAL_VMLAP_CENTRO  = float(os.getenv("NITIDEZ_UMBRAL_VMLAP_CENTRO",  3))
+    NITIDEZ_UMBRAL_VMLAP_MASCARA = float(os.getenv("NITIDEZ_UMBRAL_VMLAP_MASCARA", 3))
     NITIDEZ_FFT_RADIO_FRACCION   = float(os.getenv("NITIDEZ_FFT_RADIO_FRACCION",   0.10))
     NITIDEZ_ROI_MARGEN           = float(os.getenv("NITIDEZ_ROI_MARGEN",           0.30))
     NITIDEZ_MIN_PIXELES_MASCARA  = int(os.getenv("NITIDEZ_MIN_PIXELES_MASCARA",    200))
@@ -149,20 +149,28 @@ def filtrar_conjuntiva(ruta_entrada, ruta_salida, ruta_no_filtrados, ruta_report
         alto, ancho = img.shape[:2]
         return alto >= TAMANO_MIN_PX and ancho >= TAMANO_MIN_PX
 
-
     def conjuntiva_valida(img):
-        h, w = img.shape[:2]
-        area_img = h * w
-
         anchor, radius = extractor.detect_eye_anchor(img)
-        win_mask, _, _ = extractor.get_search_window(img, anchor, radius)
-        raw_mask = extractor.find_medialuna_by_contrast(img, win_mask, anchor, radius)
+        
+        # CAVERNÍCOLA CENTRALIZA: Recortamos para ignorar basura de los bordes
+        img_ojo, anchor_ojo, (off_x, off_y) = extractor.crop_to_eye(img, anchor, radius)
+        
+        h, w = img_ojo.shape[:2]
+        area_ojo = h * w
+
+        win_mask, _, _ = extractor.get_search_window(img_ojo, anchor_ojo, radius)
+        raw_mask = extractor.find_medialuna_by_contrast(img_ojo, win_mask, anchor_ojo, radius)
         final_mask = extractor.polish_final(raw_mask)
-        final_mask = extractor.cerrar_forma_medialuna(final_mask, anchor, radius)
+        final_mask = extractor.cerrar_forma_medialuna(final_mask, anchor_ojo, radius)
 
         pixeles_conjuntiva = np.count_nonzero(final_mask)
-        porcentaje = pixeles_conjuntiva / area_img
+        # El porcentaje se mide sobre el recorte del ojo, mas realista
+        porcentaje = pixeles_conjuntiva / area_ojo
         encontrada = pixeles_conjuntiva > 0
+
+        # Crear mascara del tamaño original para que el resto del codigo no rompa
+        full_mask = np.zeros(img.shape[:2], dtype=np.uint8)
+        full_mask[off_y:off_y+h, off_x:off_x+w] = final_mask
 
         forma_valida = False
         posicion_valida = False
@@ -174,28 +182,34 @@ def filtrar_conjuntiva(ruta_entrada, ruta_salida, ruta_no_filtrados, ruta_report
                 cnt_mayor = max(cnts, key=cv2.contourArea)
                 bx, by, bw, bh = cv2.boundingRect(cnt_mayor)
                 aspect = bw / max(bh, 1)
-                forma_valida = (aspect >= CONJUNTIVA_MIN_ASPECT_RATIO) and (bw >= w * CONJUNTIVA_MIN_ANCHO_FRACCION)
                 
-                # Validar posición (debe estar central y debajo del ojo)
-                cx_ojo, cy_ojo = anchor
+                # Forma en el recorte
+                CONJ_MIN_ANCHO_FRAC = float(os.getenv("CONJUNTIVA_MIN_ANCHO_FRACCION", 0.08))
+                forma_valida = (aspect >= CONJUNTIVA_MIN_ASPECT_RATIO) and (bw >= w * CON_MIN_ANCHO_FRAC if 'CON_MIN_ANCHO_FRAC' in locals() else bw >= w * 0.1)
+                # Re-check variable names from .env
+                forma_valida = (aspect >= CONJUNTIVA_MIN_ASPECT_RATIO) and (bw >= w * 0.15)
+                
+                # Validar posición (en el recorte, está centrado)
+                cx_ojo, cy_ojo = anchor_ojo
                 cx_conj = bx + bw / 2
                 
-                # Está debajo o casi a la altura del centro
                 esta_debajo = (by + bh / 2) > (cy_ojo - radius * 0.5)
-                # Alineado horizontalmente con el centro del ojo (no es un pedacito en el extremo lejos)
-                alineada = abs(cx_ojo - cx_conj) < (radius * 2.0) 
+                # Ojo puede mirar a los lados. Tolerancia 1.8 radios.
+                alineada = abs(cx_ojo - cx_conj) < (radius * 1.8) 
                 
-                posicion_valida = esta_debajo and alineada
+                # Solo falla si toca piso de forma extrema (cuero de cachete)
+                toca_piso = (by + bh) > (h - 1)
+                posicion_valida = esta_debajo and alineada and not toca_piso
 
-                # Validar pestañas (Píxeles excesivamente negros dentro de la conjuntiva)
-                lab = cv2.cvtColor(img, cv2.COLOR_BGR2LAB)
+                # Validar pestañas
+                lab = cv2.cvtColor(img_ojo, cv2.COLOR_BGR2LAB)
                 l_mask = lab[:, :, 0][final_mask > 0]
                 if len(l_mask) > 0:
                     pct_oscuro = np.sum(l_mask < 50) / len(l_mask)
                     max_pestanas = float(os.getenv("CONJUNTIVA_MAX_PESTANAS_PCT", 0.08))
                     pestanas_ok = pct_oscuro <= max_pestanas
 
-        return encontrada, porcentaje, final_mask, forma_valida, posicion_valida, pestanas_ok
+        return encontrada, porcentaje, full_mask, forma_valida, posicion_valida, pestanas_ok
 
     # -------------------------------------------------------------------------
     # Procesamiento principal

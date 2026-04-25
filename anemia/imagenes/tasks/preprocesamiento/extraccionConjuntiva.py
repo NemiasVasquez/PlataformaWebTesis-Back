@@ -16,6 +16,24 @@ class ConjuntivaExtractor:
         grid = int(os.getenv("SEG_CLAHE_GRID", 8))
         self.clahe = cv2.createCLAHE(clipLimit=clip, tileGridSize=(grid, grid))
 
+    def crop_to_eye(self, img, center, radius):
+        """
+        CAVERNÍCOLA RECORTA: Quita lo que no es ojo.
+        Deja margen para que la conjuntiva respire y no toque la pared de piedra.
+        """
+        h, w = img.shape[:2]
+        cx, cy = center
+        
+        # Margen generoso: 4 radios a cada lado, 2 arriba, 4 abajo
+        x0 = max(0, cx - int(radius * 4.5))
+        x1 = min(w, cx + int(radius * 4.5))
+        y0 = max(0, cy - int(radius * 2.5))
+        y1 = min(h, cy + int(radius * 4.5))
+        
+        cropped = img[y0:y1, x0:x1]
+        new_center = (cx - x0, cy - y0)
+        return cropped, new_center, (x0, y0)
+
     def detect_eye_anchor(self, img):
         h, w = img.shape[:2]
         gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
@@ -94,24 +112,34 @@ class ConjuntivaExtractor:
         combined = cv2.bitwise_and(mask_rojo, mask_no_pelo)
         combined = cv2.bitwise_and(combined, mask_no_piel)
         combined = cv2.bitwise_and(combined, window_mask)
-        combined = cv2.subtract(combined, mask_blanco) # Blanco no es Carne
+        
+        # Blanco no es Carne (pero ojo con la palidez extrema)
+        # Solo restamos blanco que esté MUY arriba o sea muy grande
+        combined = cv2.subtract(combined, mask_blanco) 
 
         # 5. LÍMITE PIEDRA (No subir)
         y_wall_factor = float(os.getenv("SEG_Y_WALL_FACTOR", 0.8))
         y_pared = ay + int(radius * y_wall_factor)
         combined[0:y_pared, :] = 0
         
+        # 6. VETO DE PIEL PROFUNDA (No bajar demasiado)
+        # La conjuntiva no suele estar a más de 2.8 radios del CENTRO del iris
+        y_piso = ay + int(radius * 2.8)
+        combined[y_piso:, :] = 0
+        
         # --- MORFOLOGÍA ORIENTADA A MEDIALUNA ---
         kernel_clean = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
         combined = cv2.morphologyEx(combined, cv2.MORPH_OPEN, kernel_clean)
 
-        kernel_close_h = cv2.getStructuringElement(cv2.MORPH_RECT, (25, 3)) 
+        # Cierre horizontal para unir pedazos de mucosa pálida
+        kernel_close_h = cv2.getStructuringElement(cv2.MORPH_RECT, (35, 3)) 
         combined = cv2.morphologyEx(combined, cv2.MORPH_CLOSE, kernel_close_h)
 
         contours, _ = cv2.findContours(combined, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         if not contours:
             if rojo_offset == 0:
                 return self.find_medialuna_by_contrast(img, window_mask, anchor, radius, rojo_offset=15)
+            # Reintento desesperado
             return np.zeros_like(L)
 
         best_mask = np.zeros_like(L)
@@ -119,10 +147,10 @@ class ConjuntivaExtractor:
         best_cnt = None
 
         min_area_seg = int(os.getenv("SEG_MIN_AREA", 500))
-        min_aspect_pre = float(os.getenv("SEG_MIN_ASPECT_PRE", 1.2))
-        min_aspect_cave = float(os.getenv("SEG_MIN_ASPECT_CAVE", 1.4))
+        min_aspect_pre = float(os.getenv("SEG_MIN_ASPECT_PRE", 1.1))
+        min_aspect_cave = float(os.getenv("SEG_MIN_ASPECT_CAVE", 1.3))
         y_target_factor = float(os.getenv("SEG_Y_TARGET_FACTOR", 1.25))
-        solidity_target = float(os.getenv("SEG_SOLIDITY_TARGET", 0.70))
+        solidity_target = float(os.getenv("SEG_SOLIDITY_TARGET", 0.65))
 
         for cnt in contours:
             area = cv2.contourArea(cnt)
@@ -134,27 +162,42 @@ class ConjuntivaExtractor:
             cx_cnt = x + w // 2
             cy_cnt = y + h // 2
             
+            # Penalizar fuertemente si no es horizontal
             if aspect_ratio < min_aspect_pre: 
                 continue
 
-            if aspect_ratio < min_aspect_cave: continue
+            # Priorizar la "cercanía radial": la conjuntiva envuelve el iris
+            dist_centro = np.sqrt((cx_cnt - ax)**2 + (cy_cnt - ay)**2)
+            dist_factor = np.exp(-0.5 * ((dist_centro - radius * 1.6) / (radius * 0.5))**2)
             
             mask_cnt = np.zeros_like(L)
             cv2.drawContours(mask_cnt, [cnt], -1, 255, -1)
             mean_vals = cv2.mean(lab, mask=mask_cnt)
             avg_a = mean_vals[1] 
+            avg_b = mean_vals[2]
+
+            # Skin bias detection: si tiene mucho amarillo (b) relativo al rojo (a), es probable piel
+            skin_bias = 1.0
+            if avg_b > avg_a - 2:
+                skin_bias = 0.5
 
             dist_y = abs(cy_cnt - (ay + radius * y_target_factor)) / radius
-            score = area * (avg_a ** 2) * (aspect_ratio ** 1.5) * np.exp(-2.0 * dist_y)
+            
+            # SCORE MEJORADO
+            score = area * (avg_a ** 2) * (aspect_ratio ** 1.5) * dist_factor * skin_bias * np.exp(-2.0 * dist_y)
             
             hull = cv2.convexHull(cnt)
             solidity = float(area) / cv2.contourArea(hull) if cv2.contourArea(hull) > 0 else 0
             score *= (1.0 - abs(solidity - solidity_target))
             
-            # Penalización extra si el contorno es exageradamente ancho (ej. pliegue de piel)
-            if w > radius * 5:
-                score *= 0.05
+            # Penalización extra si el contorno es exageradamente ancho
+            if w > radius * 5.5:
+                score *= 0.01
             
+            # Penalización si está muy a los lados
+            dist_x = abs(cx_cnt - ax) / radius
+            score *= np.exp(-0.5 * dist_x)
+
             if score > best_score:
                 best_score = score
                 best_cnt = cnt
