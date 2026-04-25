@@ -198,7 +198,9 @@ def filtrar_conjuntiva(ruta_entrada, ruta_salida, ruta_no_filtrados, ruta_report
                 alineada = abs(cx_ojo - cx_conj) < (radius * 1.8) 
                 
                 # Solo falla si toca piso de forma extrema (cuero de cachete)
-                toca_piso = (by + bh) > (h - 1)
+                # CAVERNÍCOLA MIRA PISO: Si mancha toca suelo, es carne de pata, no ojo.
+                margen_piso = int(h * 0.05) # 5% de margen
+                toca_piso = (by + bh) > (h - margen_piso)
                 posicion_valida = esta_debajo and alineada and not toca_piso
 
                 # Validar pestañas

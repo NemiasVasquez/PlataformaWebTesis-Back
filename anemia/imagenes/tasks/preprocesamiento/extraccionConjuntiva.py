@@ -123,8 +123,9 @@ class ConjuntivaExtractor:
         combined[0:y_pared, :] = 0
         
         # 6. VETO DE PIEL PROFUNDA (No bajar demasiado)
-        # La conjuntiva no suele estar a más de 2.8 radios del CENTRO del iris
-        y_piso = ay + int(radius * 2.8)
+        # La conjuntiva no suele estar a más de 2.5 radios del CENTRO del iris
+        # CAVERNÍCOLA CORTA PIEL: Si muy abajo, es cachete de mamut, no ojo.
+        y_piso = ay + int(radius * 2.5)
         combined[y_piso:, :] = 0
         
         # --- MORFOLOGÍA ORIENTADA A MEDIALUNA ---
