@@ -1,32 +1,31 @@
-# imagenes/tasks/balanceoImagenes.py
-from django.conf import settings
 import os
 import random
 import shutil
 
-def balancear_dataset(control_folder, parkinson_folder, output_control_folder, output_parkinson_folder):
-    os.makedirs(output_control_folder, exist_ok=True)
-    os.makedirs(output_parkinson_folder, exist_ok=True)
+def balancear_dataset(ruta_control, ruta_anemia, salida_control, salida_anemia):
+    """
+    BALANCEO DE CLASES: Asegura que haya la misma cantidad de imágenes 
+    de personas con y sin anemia, duplicando imágenes aleatoriamente 
+    si es necesario para evitar sesgos en el modelo.
+    """
+    os.makedirs(salida_control, exist_ok=True)
+    os.makedirs(salida_anemia, exist_ok=True)
 
-    control_files = [f for f in os.listdir(control_folder) if os.path.isfile(os.path.join(control_folder, f))]
-    parkinson_files = [f for f in os.listdir(parkinson_folder) if os.path.isfile(os.path.join(parkinson_folder, f))]
+    archivos_c = [f for f in os.listdir(ruta_control) if os.path.isfile(os.path.join(ruta_control, f))]
+    archivos_a = [f for f in os.listdir(ruta_anemia) if os.path.isfile(os.path.join(ruta_anemia, f))]
 
-    n_parkinson = len(parkinson_files)
-    if len(control_files) == 0 or len(parkinson_files) == 0:
-        print("❌ No hay imágenes suficientes para balancear.")
+    if not archivos_c or not archivos_a:
+        print("Faltan imágenes para el balanceo.")
         return
 
-    additional_control_files = random.choices(control_files, k=n_parkinson - len(control_files))
-    balanced_control_files = control_files + additional_control_files
+    n_max = max(len(archivos_c), len(archivos_a))
 
-    for i, file in enumerate(balanced_control_files):
-        src_path = os.path.join(control_folder, file)
-        dest_path = os.path.join(output_control_folder, f"{i}_{file}")
-        shutil.copy(src_path, dest_path)
+    def copiar_balanceado(lista, origen, destino, total):
+        extra = random.choices(lista, k=total - len(lista))
+        for i, f in enumerate(lista + extra):
+            shutil.copy(os.path.join(origen, f), os.path.join(destino, f"{i}_{f}"))
 
-    for file in parkinson_files:
-        src_path = os.path.join(parkinson_folder, file)
-        dest_path = os.path.join(output_parkinson_folder, file)
-        shutil.copy(src_path, dest_path)
+    copiar_balanceado(archivos_c, ruta_control, salida_control, n_max)
+    copiar_balanceado(archivos_a, ruta_anemia, salida_anemia, n_max)
 
-    print(f"✅ Balanceo completo. {len(balanced_control_files)} imágenes en control, {len(parkinson_files)} en parkinson.")
+    print(f"Balanceo completado: {n_max} imágenes por categoría.")
