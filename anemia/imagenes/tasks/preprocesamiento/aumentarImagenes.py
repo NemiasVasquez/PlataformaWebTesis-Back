@@ -4,12 +4,14 @@ import numpy as np
 import random
 import glob
 
-def aumentar_dataset(ruta_entrada, ruta_salida, min_imagenes=300):
+def aumentar_dataset(ruta_entrada, ruta_salida, min_imagenes=None):
     """
     DATA AUGMENTATION: Incrementa la cantidad de imágenes aplicando métodos
     como espejado, rotación leve, y ajustes de brillo/contraste.
     Asegura un mínimo de imágenes por clase para mejorar el entrenamiento.
     """
+    if min_imagenes is None:
+        min_imagenes = int(os.getenv("MIN_IMAGES_AUGMENTATION", 300))
     categorias = ['SIN ANEMIA', 'CON ANEMIA']
     
     for cat in categorias:
@@ -91,4 +93,5 @@ def aumentar_dataset(ruta_entrada, ruta_salida, min_imagenes=300):
 
 if __name__ == "__main__":
     # Para pruebas rápidas
-    aumentar_dataset("media/procesadas/resize", "media/procesadas/aumentation")
+    min_img = int(os.getenv("MIN_IMAGES_AUGMENTATION", 300))
+    aumentar_dataset("media/procesadas/resize", "media/procesadas/aumentation", min_imagenes=min_img)

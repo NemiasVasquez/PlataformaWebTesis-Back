@@ -78,8 +78,9 @@ def ejecutar_paso_aumentacion():
     """Aplica data augmentation para balancear y expandir el dataset."""
     input_folder = os.path.join(settings.BASE_DIR, os.getenv("RUTA_PNG_RESIZE"))
     output_folder = os.path.join(settings.BASE_DIR, os.getenv("RUTA_AUMENTATION"))
+    min_img = int(os.getenv("MIN_IMAGES_AUGMENTATION", 300))
     limpiar_carpeta(output_folder)
-    aumentar_dataset(input_folder, output_folder, min_imagenes=300)
+    aumentar_dataset(input_folder, output_folder, min_imagenes=min_img)
 
 def mover_basura_imagen(nombre, categoria, razon):
     """Mueve una imagen de las carpetas aceptadas a la carpeta de no filtradas."""
