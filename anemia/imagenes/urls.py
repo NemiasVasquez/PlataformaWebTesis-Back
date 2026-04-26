@@ -15,4 +15,5 @@ urlpatterns = [
     path('listar_imagenes/', views.listar_imagenes, name='listar-imagenes'),
     path('explorar/', views.explorar_carpetas, name='explorar-carpetas'),
     path('mover_archivo/', views.mover_archivo, name='mover-archivo'),
+    path('preparar_dataset/', views.ejecutar_preparar_dataset, name='preparar-dataset'),
 ]

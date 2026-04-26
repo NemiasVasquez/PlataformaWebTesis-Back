@@ -104,6 +104,14 @@ def explorar_carpetas(request):
         "pagination": {"total": len(files_info), "page": page, "total_pages": (len(files_info)+page_size-1)//page_size}
     })
 
+def ejecutar_preparar_dataset(request):
+    """Crea el archivo comprimido con el dataset para el modelo."""
+    try:
+        path = services.preparar_dataset_modelo()
+        return JsonResponse({"mensaje": "Dataset comprimido creado con éxito", "path": path})
+    except Exception as e:
+        return JsonResponse({"error": str(e)}, status=500)
+
 def listar_imagenes(request):
     """Alias para mantener compatibilidad con el frontend."""
     return explorar_carpetas(request)

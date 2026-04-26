@@ -109,3 +109,34 @@ def mover_basura_imagen(nombre, categoria, razon):
                 else:
                     os.remove(test_path)
     return encontrado
+
+def preparar_dataset_modelo():
+    """Crea el archivo zip con las imágenes aumentadas para el entrenamiento del modelo."""
+    aumentation_path = os.path.join(settings.BASE_DIR, os.getenv("RUTA_AUMENTATION", "media/procesadas/aumentation"))
+    data_modelo_path = os.path.join(settings.BASE_DIR, 'media', 'data_modelo')
+    conjuntiva_path = os.path.join(data_modelo_path, 'Conjuntiva')
+    zip_name = "ConjuntivaPng"
+    zip_full_path = os.path.join(data_modelo_path, zip_name)
+
+    # 1. Asegurar carpeta data_modelo y limpiar temporal
+    os.makedirs(data_modelo_path, exist_ok=True)
+    if os.path.exists(conjuntiva_path):
+        shutil.rmtree(conjuntiva_path)
+    os.makedirs(conjuntiva_path, exist_ok=True)
+
+    # 2. Copiar carpetas de aumentation
+    for cat in ['CON ANEMIA', 'SIN ANEMIA']:
+        src = os.path.join(aumentation_path, cat)
+        dst = os.path.join(conjuntiva_path, cat)
+        if os.path.exists(src):
+            shutil.copytree(src, dst)
+        else:
+            os.makedirs(dst, exist_ok=True)
+
+    # 3. Crear el ZIP (incluyendo la carpeta Conjuntiva dentro)
+    shutil.make_archive(zip_full_path, 'zip', root_dir=data_modelo_path, base_dir='Conjuntiva')
+
+    # 4. Limpiar temporal
+    shutil.rmtree(conjuntiva_path)
+    
+    return zip_full_path + ".zip"
