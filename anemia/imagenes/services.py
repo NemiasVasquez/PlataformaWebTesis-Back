@@ -6,6 +6,7 @@ from .tasks.preprocesamiento.filtrarImagenes import filtrar_conjuntiva
 from .tasks.preprocesamiento.balanceoImagenes import balancear_dataset
 from .tasks.preprocesamiento.extraccionConjuntiva import segmentar_y_recortar_conjuntiva
 from .tasks.preprocesamiento.resizeImagenes import redimensionar_imagenes
+from .tasks.preprocesamiento.aumentarImagenes import aumentar_dataset
 
 def procesar_logica_carpetas():
     """Crea la estructura de directorios necesaria para el procesamiento."""
@@ -22,6 +23,7 @@ def procesar_logica_carpetas():
         os.getenv("RUTA_PNG"),
         os.getenv("RUTA_AREA"),
         os.getenv("RUTA_PNG_RESIZE"),
+        os.getenv("RUTA_AUMENTATION"),
         os.getenv("RUTA_ENTRADA"),
         os.getenv("RUTA_SALIDA"),
         os.getenv("RUTA_NO_FILTRADOS"),
@@ -72,12 +74,20 @@ def ejecutar_paso_redimensionamiento():
     limpiar_carpeta(output_folder)
     redimensionar_imagenes(input_folder, output_folder)
 
+def ejecutar_paso_aumentacion():
+    """Aplica data augmentation para balancear y expandir el dataset."""
+    input_folder = os.path.join(settings.BASE_DIR, os.getenv("RUTA_PNG_RESIZE"))
+    output_folder = os.path.join(settings.BASE_DIR, os.getenv("RUTA_AUMENTATION"))
+    limpiar_carpeta(output_folder)
+    aumentar_dataset(input_folder, output_folder, min_imagenes=300)
+
 def mover_basura_imagen(nombre, categoria, razon):
     """Mueve una imagen de las carpetas aceptadas a la carpeta de no filtradas."""
     carpetas = [
         os.getenv("RUTA_SALIDA"), os.getenv("RUTA_BALANCEADAS"),
         os.getenv("RUTA_SEGMENTADAS"), os.getenv("RUTA_RECORTADAS"),
-        os.getenv("RUTA_PNG"), os.getenv("RUTA_AREA"), os.getenv("RUTA_PNG_RESIZE")
+        os.getenv("RUTA_PNG"), os.getenv("RUTA_AREA"), 
+        os.getenv("RUTA_PNG_RESIZE"), os.getenv("RUTA_AUMENTATION")
     ]
     
     destino_base = os.path.join(settings.BASE_DIR, os.getenv("RUTA_NO_FILTRADOS"), categoria, razon)

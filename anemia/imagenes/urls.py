@@ -8,6 +8,7 @@ urlpatterns = [
     path('balancear/', views.ejecutar_balanceo, name='balancear-dataset'),
     path('segmentar/', views.ejecutar_segmentacion, name='segmentar-conjuntiva'),
     path('redimensionar/', views.ejecutar_redimensionamiento, name='redimensionar-imagenes'),
+    path('aumentar/', views.ejecutar_aumentacion, name='aumentar-dataset'),
     
     # Nuevos endpoints
     path('ejecutar_todo/', views.ejecutar_todo, name='ejecutar-todo'),

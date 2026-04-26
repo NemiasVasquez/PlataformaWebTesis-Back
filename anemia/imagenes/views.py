@@ -30,15 +30,21 @@ def ejecutar_redimensionamiento(request):
     services.ejecutar_paso_redimensionamiento()
     return JsonResponse({"mensaje": "Redimensionamiento completado"})
 
+def ejecutar_aumentacion(request):
+    """Aplica data augmentation para balancear el dataset."""
+    services.ejecutar_paso_aumentacion()
+    return JsonResponse({"mensaje": "Data Augmentation completado"})
+
 def ejecutar_todo(request):
     """Ejecuta el pipeline completo de procesamiento."""
     try:
         services.procesar_logica_carpetas()
         services.ejecutar_paso_filtrado()
-        # services.ejecutar_paso_balanceo()
+        services.ejecutar_paso_balanceo()
         services.ejecutar_paso_segmentacion()
-        # services.ejecutar_paso_redimensionamiento()
-        return JsonResponse({"mensaje": "Proceso completo ejecutado"})
+        services.ejecutar_paso_redimensionamiento()
+        services.ejecutar_paso_aumentacion()
+        return JsonResponse({"mensaje": "Proceso completo ejecutado (con Aumentación)"})
     except Exception as e:
         return JsonResponse({"error": str(e)}, status=500)
 
