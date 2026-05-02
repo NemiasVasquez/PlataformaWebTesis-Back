@@ -53,26 +53,28 @@ class ConjuntivaExtractor:
             return 0.5  # Uña o frente con luz (blanco sin rojo)
         return 0.1  # Piel, pelo (nada de nada)
 
-    def crop_to_eye(self, img, center, radius, align=False):
+    def crop_to_eye(self, img, center, radius, align=False, factor_extra=1.0):
         """
         CAVERNÍCOLA RECORTA: Quita lo que no es ojo.
         Si la detección falló, usa el RECORTE FIJO: 15% arriba/abajo, 5% lados.
+        factor_extra: Multiplicador para ampliar el recorte (1.0 = normal, 1.5 = 50% más amplio)
         """
         h, w = img.shape[:2]
         cx, cy = center
         
         # SI EL ANCLA ES EL CENTRO EXACTO (FALLBACK), USAR RECORTE FIJO DEL JEFE
         if cx == w // 2 and cy == h // 2 and radius == int(w * 0.15):
-            y0, y1 = int(h * 0.15), int(h * 0.85)
+            margen = 0.15 / factor_extra
+            y0, y1 = int(h * margen), int(h * (1 - margen))
             x0, x1 = int(w * 0.05), int(w * 0.95)
         else:
             # --- ALINEACIÓN DESACTIVADA POR JEFE ---
             if align:
                 img, center = self.align_eye(img, center, radius)
             
-            f_x = float(os.getenv("OJO_CROP_FACTOR_X", 6.5))
-            f_y_up = float(os.getenv("OJO_CROP_FACTOR_Y_UP", 3.0))
-            f_y_down = float(os.getenv("OJO_CROP_FACTOR_Y_DOWN", 7.0))
+            f_x = float(os.getenv("OJO_CROP_FACTOR_X", 6.5)) * factor_extra
+            f_y_up = float(os.getenv("OJO_CROP_FACTOR_Y_UP", 3.0)) * factor_extra
+            f_y_down = float(os.getenv("OJO_CROP_FACTOR_Y_DOWN", 7.0)) * factor_extra
 
             # CAVERNÍCOLA: Si el detector encontró solo la pupila, el radio es microscópico.
             # Asegurar un radio mínimo del 12% del ancho de la imagen.
@@ -327,16 +329,19 @@ class ConjuntivaExtractor:
         L, a_ch, b_ch = cv2.split(lab)
         ax, ay = anchor 
 
-        # 1. QUITAR (Piel y Pelo)
+        # 1. QUITAR (Piel y Pelo + PESTAÑAS)
+        # Subir umbral a 90 para atrapar pestañas grises
         _, mask_no_pelo = cv2.threshold(L, int(os.getenv("SEG_PELO_L_THRES", 75)), 255, cv2.THRESH_BINARY)
         mask_no_piel = cv2.compare(a_ch, b_ch, cv2.CMP_GT)
 
-        # 2. BUSCAR BLANCO (Obligatorio)
-        _, mask_blanco = cv2.threshold(L, int(os.getenv("SEG_BLANCO_L_THRES", 185)), 255, cv2.THRESH_BINARY)
-        if cv2.countNonZero(mask_blanco) < 30: # Mínimo de blanco relajado (recortes cerrados)
+        # 2. BUSCAR BLANCO (esclerótica) - Expandir agresivamente para excluirla
+        _, mask_blanco = cv2.threshold(L, int(os.getenv("SEG_BLANCO_L_THRES", 165)), 255, cv2.THRESH_BINARY)
+        if cv2.countNonZero(mask_blanco) < 30:
             return np.zeros_like(L)
-            
-        mask_blanco = cv2.morphologyEx(mask_blanco, cv2.MORPH_CLOSE, np.ones((11,11), np.uint8))
+        
+        # Expandir zona blanca con dilatación GRANDE para cubrir toda la esclerótica
+        mask_blanco = cv2.morphologyEx(mask_blanco, cv2.MORPH_CLOSE, np.ones((15,15), np.uint8))
+        mask_blanco = cv2.dilate(mask_blanco, np.ones((7,7), np.uint8), iterations=2)
         
         # 3. BUSCAR CARNE ROJA
         a_fuerte = self.clahe.apply(a_ch)
@@ -347,19 +352,20 @@ class ConjuntivaExtractor:
         combined = cv2.bitwise_and(combined, mask_no_piel)
         combined = cv2.bitwise_and(combined, window_mask)
         
-        # No suavizar tanto el blanco para evitar incluir esclerótica
+        # Restar esclerótica expandida
         combined = cv2.subtract(combined, mask_blanco) 
 
-        # Pared suave superior (Mascara circular para evitar línea recta)
+        # Pared circular superior (excluir zona del iris)
         h, w = img.shape[:2]
         wall_mask = np.ones((h, w), dtype=np.uint8) * 255
-        # Reducimos el radio de exclusión para no cortar conjuntiva muy pegada al iris
         cv2.circle(wall_mask, (int(ax), int(ay)), int(radius * float(os.getenv("SEG_Y_WALL_FACTOR", 0.8))), 0, -1)
         combined = cv2.bitwise_and(combined, wall_mask)
         
-        # ELIMINADO: Corte seco inferior que causaba líneas rectas
-        # Solo usamos la ventana elíptica y el scoring para limitar abajo
-        
+        # CAVERNÍCOLA: Conjuntiva vive DEBAJO del centro del iris, no arriba
+        # Cortar todo lo que esté más de 0.5*radius por encima del centro
+        y_limite_sup = max(0, int(ay - radius * 0.5))
+        combined[:y_limite_sup, :] = 0
+
         combined = cv2.morphologyEx(combined, cv2.MORPH_OPEN, np.ones((3,3), np.uint8))
         combined = cv2.morphologyEx(combined, cv2.MORPH_CLOSE, cv2.getStructuringElement(cv2.MORPH_RECT, (35, 3)))
 
