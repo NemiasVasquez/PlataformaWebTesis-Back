@@ -7,6 +7,7 @@ from .tasks.preprocesamiento.balanceoImagenes import balancear_dataset
 from .tasks.preprocesamiento.extraccionConjuntiva import segmentar_y_recortar_conjuntiva
 from .tasks.preprocesamiento.resizeImagenes import redimensionar_imagenes
 from .tasks.preprocesamiento.aumentarImagenes import aumentar_dataset
+from .tasks.preprocesamiento.recortarOjo import recortar_ojos_dataset
 
 def procesar_logica_carpetas():
     """Crea la estructura de directorios necesaria para el procesamiento."""
@@ -25,6 +26,7 @@ def procesar_logica_carpetas():
         os.getenv("RUTA_PNG_RESIZE"),
         os.getenv("RUTA_AUMENTATION"),
         os.getenv("RUTA_ENTRADA"),
+        os.getenv("RUTA_RECORTADO_OJO"),
         os.getenv("RUTA_SALIDA"),
         os.getenv("RUTA_NO_FILTRADOS"),
     ]
@@ -32,8 +34,50 @@ def procesar_logica_carpetas():
     asegurar_carpetas(abs_paths)
     return abs_paths
 
+def limpiar_todo_el_proceso():
+    """Limpia absolutamente todas las carpetas de resultados intermedios y finales."""
+    carpetas = [
+        os.getenv("RUTA_RECORTADO_OJO"),
+        os.getenv("RUTA_SALIDA"),
+        os.getenv("RUTA_NO_FILTRADOS"),
+        os.getenv("RUTA_BALANCEADAS"),
+        os.getenv("RUTA_SEGMENTADAS"),
+        os.getenv("RUTA_RECORTADAS"),
+        os.getenv("RUTA_PNG"),
+        os.getenv("RUTA_AREA"),
+        os.getenv("RUTA_PNG_RESIZE"),
+        os.getenv("RUTA_AUMENTATION")
+    ]
+    for c in carpetas:
+        if c:
+            limpiar_carpeta(os.path.join(settings.BASE_DIR, c))
+    
+    reporte = os.path.join(settings.BASE_DIR, os.getenv("RUTA_REPORTE_TXT"))
+    if reporte and os.path.exists(reporte): 
+        try:
+            os.remove(reporte)
+        except:
+            pass
+
+def ejecutar_paso_recorte_ojo():
+    """Ejecuta el pre-recorte de ojos para centrar la imagen."""
+    entrada = os.path.join(settings.BASE_DIR, os.getenv("RUTA_ENTRADA"))
+    salida = os.path.join(settings.BASE_DIR, os.getenv("RUTA_RECORTADO_OJO"))
+    limpiar_carpeta(salida)
+    recortar_ojos_dataset(entrada, salida)
+
 def ejecutar_paso_filtrado():
     """Ejecuta el filtrado de imágenes por calidad y anatomía."""
+    entrada_recorte = os.path.join(settings.BASE_DIR, os.getenv("RUTA_RECORTADO_OJO"))
+    
+    # Prioridad absoluta a las imágenes recortadas
+    if os.path.exists(entrada_recorte) and any(os.scandir(entrada_recorte)):
+        entrada = entrada_recorte
+        print(f"INFO: Usando imágenes RECORTADAS para el filtrado ({entrada})")
+    else:
+        entrada = os.path.join(settings.BASE_DIR, os.getenv("RUTA_ENTRADA"))
+        print(f"ADVERTENCIA: No se encontraron recortes. Usando imágenes ORIGINALES ({entrada})")
+        
     salida = os.path.join(settings.BASE_DIR, os.getenv("RUTA_SALIDA"))
     no_filtrados = os.path.join(settings.BASE_DIR, os.getenv("RUTA_NO_FILTRADOS"))
     reporte = os.path.join(settings.BASE_DIR, os.getenv("RUTA_REPORTE_TXT"))
@@ -42,10 +86,7 @@ def ejecutar_paso_filtrado():
     limpiar_carpeta(no_filtrados)
     if os.path.exists(reporte): os.remove(reporte)
     
-    filtrar_conjuntiva(
-        os.path.join(settings.BASE_DIR, os.getenv("RUTA_ENTRADA")),
-        salida, no_filtrados, reporte
-    )
+    filtrar_conjuntiva(entrada, salida, no_filtrados, reporte)
 
 def ejecutar_paso_balanceo():
     """Equilibra el número de imágenes entre clases."""
@@ -140,3 +181,51 @@ def preparar_dataset_modelo():
     shutil.rmtree(conjuntiva_path)
     
     return zip_full_path + ".zip"
+
+def ejecutar_paso_prueba_rapida():
+    """Selecciona 20 imágenes aleatorias de cada clase y ejecuta el proceso sobre ellas."""
+    import random
+    import glob
+    
+    # 1. Definir rutas de origen y destino de prueba
+    entrada_base = os.path.join(settings.BASE_DIR, os.getenv("RUTA_ENTRADA"))
+    prueba_dir = os.path.join(settings.BASE_DIR, "media/prueba_rapida")
+    prueba_entrada = os.path.join(prueba_dir, "originales")
+    prueba_recortado = os.path.join(prueba_dir, "recortado_ojo")
+    prueba_filtrado = os.path.join(prueba_dir, "filtrado")
+    prueba_segmentado = os.path.join(prueba_dir, "segmentado")
+    prueba_recortada = os.path.join(prueba_dir, "recortadas") # La que el usuario ve
+    prueba_png = os.path.join(prueba_dir, "png")
+    prueba_area = os.path.join(prueba_dir, "area")
+    prueba_no_filtrados = os.path.join(prueba_dir, "no_filtradas")
+    reporte = os.path.join(prueba_dir, "reporte_prueba.txt")
+
+    # 2. Limpiar y preparar carpetas
+    for d in [prueba_entrada, prueba_recortado, prueba_filtrado, prueba_segmentado, prueba_recortada, prueba_png, prueba_area, prueba_no_filtrados]:
+        limpiar_carpeta(d)
+        for cat in ['CON ANEMIA', 'SIN ANEMIA']:
+            os.makedirs(os.path.join(d, cat), exist_ok=True)
+
+    # 3. Selección aleatoria
+    for cat in ['CON ANEMIA', 'SIN ANEMIA']:
+        archivos = glob.glob(os.path.join(entrada_base, cat, "*.jpeg")) + glob.glob(os.path.join(entrada_base, cat, "*.jpg"))
+        if len(archivos) > 20:
+            seleccion = random.sample(archivos, 20)
+        else:
+            seleccion = archivos
+        
+        for f in seleccion:
+            shutil.copy(f, os.path.join(prueba_entrada, cat, os.path.basename(f)))
+
+    # 4. Ejecutar Pipeline sobre la muestra
+    # Recorte
+    recortar_ojos_dataset(prueba_entrada, prueba_recortado)
+    # Filtrado (usando los recortes si existen)
+    filtrar_conjuntiva(prueba_recortado, prueba_filtrado, prueba_no_filtrados, reporte)
+    # Segmentación (sobre los filtrados)
+    segmentar_y_recortar_conjuntiva(prueba_filtrado, prueba_segmentado, prueba_recortada, prueba_png, prueba_area)
+
+    return {
+        "mensaje": "Prueba rápida completada",
+        "archivos_procesados": len(glob.glob(os.path.join(prueba_recortada, "*", "*")))
+    }

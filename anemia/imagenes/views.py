@@ -10,6 +10,11 @@ def crear_carpetas_iniciales(request):
     rutas = services.procesar_logica_carpetas()
     return JsonResponse({"mensaje": "Carpetas creadas", "rutas": [str(r) for r in rutas]})
 
+def ejecutar_recorte_ojo(request):
+    """Realiza el recorte previo de ojos para centrar la imagen."""
+    services.ejecutar_paso_recorte_ojo()
+    return JsonResponse({"mensaje": "Recorte de ojos completado correctamente"})
+
 def ejecutar_filtrado(request):
     """Luce filtrado de calidad y anatomía."""
     services.ejecutar_paso_filtrado()
@@ -38,13 +43,32 @@ def ejecutar_aumentacion(request):
 def ejecutar_todo(request):
     """Ejecuta el pipeline completo de procesamiento."""
     try:
+        print("\n>>> INICIANDO PROCESO GLOBAL DE IMÁGENES <<<")
+        
+        print("\n[PASO 0] Limpiando procesos anteriores...")
+        services.limpiar_todo_el_proceso()
         services.procesar_logica_carpetas()
+        
+        print("\n[PASO 1] Recortando ojos...")
+        services.ejecutar_paso_recorte_ojo()
+        
+        print("\n[PASO 2] Filtrando por calidad y anatomía...")
         services.ejecutar_paso_filtrado()
+        
+        print("\n[PASO 3] Balanceando clases...")
         services.ejecutar_paso_balanceo()
+        
+        print("\n[PASO 4] Extrayendo conjuntiva (Segmentación)...")
         services.ejecutar_paso_segmentacion()
+        
+        print("\n[PASO 5] Redimensionando para modelo...")
         services.ejecutar_paso_redimensionamiento()
+        
+        print("\n[PASO 6] Aplicando Data Augmentation...")
         services.ejecutar_paso_aumentacion()
-        return JsonResponse({"mensaje": "Proceso completo ejecutado (con Aumentación)"})
+        
+        print("\n>>> PROCESO GLOBAL FINALIZADO CON ÉXITO <<<\n")
+        return JsonResponse({"mensaje": "Proceso completo ejecutado (con Recorte y Aumentación)"})
     except Exception as e:
         return JsonResponse({"error": str(e)}, status=500)
 
@@ -89,8 +113,15 @@ def explorar_carpetas(request):
                 if img_tmp is not None: h, w = img_tmp.shape[:2]
             except: pass
             
+            url_original = None
+            categoria = os.path.basename(target_dir)
+            if categoria in ['CON ANEMIA', 'SIN ANEMIA']:
+                path_orig = os.path.join(settings.BASE_DIR, 'media', 'originales', categoria, f)
+                if os.path.exists(path_orig):
+                    url_original = f"{settings.MEDIA_URL}originales/{categoria}/{f}"
+
             files_info.append({
-                "name": f, "url": url, "size": f"{size_kb} KB",
+                "name": f, "url": url, "url_original": url_original, "size": f"{size_kb} KB",
                 "width": w, "height": h, "resolution": f"{w}x{h}"
             })
 
@@ -115,3 +146,11 @@ def ejecutar_preparar_dataset(request):
 def listar_imagenes(request):
     """Alias para mantener compatibilidad con el frontend."""
     return explorar_carpetas(request)
+
+def ejecutar_prueba_rapida(request):
+    """Ejecuta una prueba rápida con una muestra aleatoria."""
+    try:
+        resultado = services.ejecutar_paso_prueba_rapida()
+        return JsonResponse(resultado)
+    except Exception as e:
+        return JsonResponse({"error": str(e)}, status=500)

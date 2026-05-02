@@ -3,7 +3,7 @@ import cv2
 import numpy as np
 import sys
 
-sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from imagenes.tasks.preprocesamiento.extraccionConjuntiva import ConjuntivaExtractor
 
 extractor = ConjuntivaExtractor()
