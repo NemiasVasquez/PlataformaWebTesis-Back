@@ -63,5 +63,46 @@ def evaluar_imagen_anemia(request):
         "probable_clase": resultado['probable_clase'],
         "categoria": resultado.get('categoria', 'SIN ANEMIA'),
         "confianza": resultado.get('confianza'),
+        "rcap": resultado.get('rcap'),
+    })
+
+@csrf_exempt
+def evaluar_indicadores(request):
+    if request.method != 'POST':
+        return JsonResponse({'alert': 'Método no permitido'}, status=405)
+
+    from .tasks import cargar_datos, entrenar
+    from .tasks.explicabilidad import generate_smoothgrad, calcular_nivel_detalle
+    import torch
+
+    # Cargar 5 imagenes de test para evaluar
+    x_train, x_test, y_train, y_test = cargar_datos.cargar_imagenes()
+    model, device = entrenar.cargar_modelo_entrenado()
+    model.eval()
+
+    num_imgs = min(5, len(x_test))
+    x_test_sample = x_test[:num_imgs]
+    y_test_sample = y_test[:num_imgs]
+
+    saliency_maps = []
+    images_rgb = []
+    
+    for i in range(num_imgs):
+        img_np = x_test_sample[i]
+        tensor_img = torch.tensor(img_np).permute(2, 0, 1).unsqueeze(0).float().to(device) / 255.0
+        
+        heatmap, overlay = generate_smoothgrad(model, device, tensor_img, img_np, int(y_test_sample[i]))
+        gray_map = cv2.cvtColor(heatmap, cv2.COLOR_BGR2GRAY)
+        
+        saliency_maps.append(gray_map)
+        images_rgb.append(img_np)
+        
+    resultado = calcular_nivel_detalle(images_rgb, saliency_maps, model, device=device)
+    
+    return JsonResponse({
+        "mensaje": "Indicadores calculados exitosamente",
+        "D": round(resultado['D'], 2),
+        "RCAP": [round(val, 4) for val in resultado['RCAP_valores']],
+        "imagenes_evaluadas": num_imgs
     })
     

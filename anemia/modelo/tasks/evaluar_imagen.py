@@ -16,6 +16,8 @@ from pathlib import Path
 from django.conf.urls.static import static
 import shutil 
 import torch
+from .explicabilidad import generate_smoothgrad
+from ..indicadores.nivel_detalle import calcular_nivel_detalle
 
 def evaluar_imagen_individual(imagen):
     base_dir = os.path.join(settings.MEDIA_ROOT, 'pruebas')
@@ -124,6 +126,55 @@ def evaluar_imagen_individual(imagen):
                     shutil.rmtree(ruta_paso_new)
                 os.rename(ruta_paso_old, ruta_paso_new)
 
+    # === EXPLICABILIDAD SMOOTHGRAD ===
+    try:
+        ruta_exp = os.path.join(ruta_base, 'explicabilidad', resultado_clase)
+        os.makedirs(ruta_exp, exist_ok=True)
+        
+        path_original = os.path.join(ruta_base, 'entrada', resultado_clase, 'imagen.jpeg')
+        img_original = cv2.imread(path_original)
+        
+        # Ojo, al usar glob el nombre del area podría cambiar si usa uuid, busquemos el primero
+        path_area_dir = os.path.join(ruta_base, 'area', resultado_clase)
+        img_area = None
+        if os.path.exists(path_area_dir):
+            archivos_area = os.listdir(path_area_dir)
+            if archivos_area:
+                img_area = cv2.imread(os.path.join(path_area_dir, archivos_area[0]))
+        
+        # SmoothGrad requiere gradientes, por lo que creamos tensor y lo enviamos sin with torch.no_grad()
+        tensor_img_grad = torch.tensor(x).permute(0, 3, 1, 2).float().to(device) / 255.0
+        
+        heatmap, overlay = generate_smoothgrad(model, device, tensor_img_grad, img_original, pred)
+        
+        if img_area is not None:
+            if img_area.shape[:2] != heatmap.shape[:2]:
+                img_area = cv2.resize(img_area, (heatmap.shape[1], heatmap.shape[0]))
+            overlay_delineado = cv2.addWeighted(img_area, 0.6, heatmap, 0.4, 0)
+        else:
+            overlay_delineado = overlay
+            
+        cv2.imwrite(os.path.join(ruta_exp, 'heatmap.jpeg'), heatmap)
+        cv2.imwrite(os.path.join(ruta_exp, 'overlay.jpeg'), overlay)
+        cv2.imwrite(os.path.join(ruta_exp, 'overlay_delineado.jpeg'), overlay_delineado)
+        
+        # Calcular indicador RCAP para esta imagen
+        try:
+            gray_map = cv2.cvtColor(heatmap, cv2.COLOR_BGR2GRAY)
+            # img es cv2 IMREAD_UNCHANGED (tiene alpha si es png)
+            img_rgb_o_rgba = cv2.cvtColor(img, cv2.COLOR_BGRA2RGBA) if img.shape[-1] == 4 else cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+            res_ind = calcular_nivel_detalle([img_rgb_o_rgba], [gray_map], model, device=device, class_idx=pred)
+            rcap_val = round(res_ind['RCAP_valores'][0], 4)
+        except Exception as e_ind:
+            import traceback
+            print(f"Error en calcular_nivel_detalle:\n{traceback.format_exc()}")
+            rcap_val = 0.0
+
+        print("  [OK] SmoothGrad generado exitosamente.")
+    except Exception as e:
+        print(f"  [X] Error generando SmoothGrad: {e}")
+        rcap_val = 0.0
+        
     confianza = prob_anemia if pred == 1 else (1 - prob_anemia)
     
     return {
@@ -132,5 +183,6 @@ def evaluar_imagen_individual(imagen):
         'prediccion': pred,
         'probable_clase': "Con Anemia" if pred == 1 else "Sin Anemia",
         'categoria': resultado_clase,
-        'confianza': round(confianza * 100, 1),  # Porcentaje real del modelo
+        'confianza': round(confianza * 100, 1),
+        'rcap': rcap_val
     }
