@@ -334,14 +334,18 @@ class ConjuntivaExtractor:
         _, mask_no_pelo = cv2.threshold(L, int(os.getenv("SEG_PELO_L_THRES", 75)), 255, cv2.THRESH_BINARY)
         mask_no_piel = cv2.compare(a_ch, b_ch, cv2.CMP_GT)
 
-        # 2. BUSCAR BLANCO (esclerótica) - Expandir agresivamente para excluirla
+        # 2. BUSCAR BLANCO (esclerótica) - Cerrar huecos pero NO expandir hacia abajo
         _, mask_blanco = cv2.threshold(L, int(os.getenv("SEG_BLANCO_L_THRES", 165)), 255, cv2.THRESH_BINARY)
         if cv2.countNonZero(mask_blanco) < 30:
             return np.zeros_like(L)
         
-        # Expandir zona blanca con dilatación GRANDE para cubrir toda la esclerótica
-        mask_blanco = cv2.morphologyEx(mask_blanco, cv2.MORPH_CLOSE, np.ones((15,15), np.uint8))
-        mask_blanco = cv2.dilate(mask_blanco, np.ones((7,7), np.uint8), iterations=2)
+        # Cerrar huecos internos de la esclerótica, dilatación SUAVE (no comer conjuntiva)
+        mask_blanco = cv2.morphologyEx(mask_blanco, cv2.MORPH_CLOSE, np.ones((11,11), np.uint8))
+        # Dilatar solo hacia ARRIBA (kernel rectangular vertical-arriba)
+        # Así la esclerótica se expande hacia párpado, NO hacia la conjuntiva
+        kernel_up = np.zeros((9,3), np.uint8)
+        kernel_up[:5, :] = 1  # Solo mitad superior del kernel
+        mask_blanco = cv2.dilate(mask_blanco, kernel_up, iterations=1)
         
         # 3. BUSCAR CARNE ROJA
         a_fuerte = self.clahe.apply(a_ch)
@@ -352,18 +356,29 @@ class ConjuntivaExtractor:
         combined = cv2.bitwise_and(combined, mask_no_piel)
         combined = cv2.bitwise_and(combined, window_mask)
         
-        # Restar esclerótica expandida
+        # Restar esclerótica
         combined = cv2.subtract(combined, mask_blanco) 
 
-        # Pared circular superior (excluir zona del iris)
+        # Pared: Círculo alrededor del iris + apertura ELÍPTICA abajo (sin bordes rectos)
         h, w = img.shape[:2]
-        wall_mask = np.ones((h, w), dtype=np.uint8) * 255
-        cv2.circle(wall_mask, (int(ax), int(ay)), int(radius * float(os.getenv("SEG_Y_WALL_FACTOR", 0.8))), 0, -1)
+        wall_mask = np.zeros((h, w), dtype=np.uint8)
+        wall_r = int(radius * float(os.getenv("SEG_Y_WALL_FACTOR", 0.8)))
+        
+        # Apertura elíptica: solo la zona debajo del iris, forma natural curva
+        # Centro de la elipse ligeramente debajo del iris
+        ey = int(ay + radius * 0.5)
+        erx = int(radius * 4.0)   # ancho: 4x radio del iris (amplio para conjuntivas grandes)
+        ery = int(radius * 4.5)   # alto: 4.5x radio
+        # Dibujar solo semicírculo INFERIOR de la elipse (0° a 180° = abajo en OpenCV)
+        cv2.ellipse(wall_mask, (int(ax), ey), (erx, ery), 0, 0, 180, 255, -1)
+        
+        # Bloquear zona del iris dentro de la apertura
+        cv2.circle(wall_mask, (int(ax), int(ay)), wall_r, 0, -1)
+        
         combined = cv2.bitwise_and(combined, wall_mask)
         
-        # CAVERNÍCOLA: Conjuntiva vive DEBAJO del centro del iris, no arriba
-        # Cortar todo lo que esté más de 0.5*radius por encima del centro
-        y_limite_sup = max(0, int(ay - radius * 0.5))
+        # CAVERNÍCOLA: Nada arriba del iris
+        y_limite_sup = max(0, int(ay - radius * 0.3))
         combined[:y_limite_sup, :] = 0
 
         combined = cv2.morphologyEx(combined, cv2.MORPH_OPEN, np.ones((3,3), np.uint8))
@@ -392,17 +407,20 @@ class ConjuntivaExtractor:
             skin_bias = 0.5 if avg_b > avg_a - 2 else 1.0
             
             # PUNTUACIÓN CAVERNÍCOLA: Prioridad ROJO (avg_a^3) y MEDIALUNA (aspect^2)
-            # dist_f asegura que esté a una distancia razonable del centro del ojo
             score = area * (avg_a ** 3) * (aspect ** 2.0) * dist_f * skin_bias
             
             hull = cv2.convexHull(cnt)
             solidity = float(area) / cv2.contourArea(hull) if cv2.contourArea(hull) > 0 else 0
-            # Castigamos si no es sólido (huecos)
             score *= (1.0 - abs(solidity - float(os.getenv("SEG_SOLIDITY_TARGET", 0.65))))
             
-            if w > radius * 4.5: score *= 0.01 # Muy ancho es probablemente piel o rostro
-            # if cy_c < ay: score *= 0.01 # Castigar duramente si está arriba del centro del ojo (no es conjuntiva inferior)
-            score *= np.exp(-0.5 * (abs(cx_c - ax) / radius)) # Centrado horizontalmente con el ojo
+            if w > radius * 4.5: score *= 0.01
+            
+            # PENALIZACIÓN VERTICAL: Si el borde SUPERIOR del contorno invade zona del iris → esclerótica
+            if y < ay:
+                invasion = (ay - y) / max(radius, 1)
+                score *= max(0.01, 1.0 - invasion * 0.8)
+            
+            score *= np.exp(-0.5 * (abs(cx_c - ax) / radius))
 
             if score > best_score:
                 best_score, best_cnt = score, cnt
@@ -421,6 +439,8 @@ class ConjuntivaExtractor:
             local_no_skin = cv2.compare(a_roi, b_roi, cv2.CMP_GT)
             
             refined_roi = cv2.bitwise_and(cv2.bitwise_and(local_red, local_no_skin), roi_mask)
+            # Cerrar con kernel ELÍPTICO grande para eliminar cortes verticales del threshold
+            refined_roi = cv2.morphologyEx(refined_roi, cv2.MORPH_CLOSE, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (25, 7)))
             refined_roi = cv2.morphologyEx(refined_roi, cv2.MORPH_OPEN, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5)))
             
             best_mask = np.zeros_like(L)
@@ -454,6 +474,11 @@ class ConjuntivaExtractor:
         xb, yb, bw, bh = cv2.boundingRect(cnt)
         h, w = mask.shape[:2]
         
+        # VALIDACIÓN ESTRICTA: Aspecto mínimo (debe ser horizontal, no vertical)
+        aspect = float(bw) / max(bh, 1)
+        if aspect < 1.2:
+            return np.zeros_like(mask)  # No es medialuna, es mancha
+        
         xs, y_t, y_b = [], [], []
         for x in range(xb, xb + bw):
             ys = np.where(mask[:, x] > 0)[0]
@@ -465,14 +490,38 @@ class ConjuntivaExtractor:
         y_t_i = np.interp(full_xs, xs, y_t).astype(np.float32)
         y_b_i = np.interp(full_xs, xs, y_b).astype(np.float32)
         
-        ventana = max(5, int(len(full_xs) * 0.15))
+        # SUAVIZADO FUERTE: ventana 25% del ancho (era 15%)
+        ventana = max(7, int(len(full_xs) * 0.25))
         if ventana % 2 == 0: ventana += 1
         y_t_s = cv2.GaussianBlur(y_t_i.reshape(1, -1), (ventana, 1), 0).flatten()
         y_b_s = cv2.GaussianBlur(y_b_i.reshape(1, -1), (ventana, 1), 0).flatten()
         
+        # APLANADOR: Limitar gradiente máximo entre columnas (max 2px por columna)
+        max_grad = 2.0
+        for i in range(1, len(y_t_s)):
+            if abs(y_t_s[i] - y_t_s[i-1]) > max_grad:
+                y_t_s[i] = y_t_s[i-1] + max_grad * np.sign(y_t_s[i] - y_t_s[i-1])
+            if abs(y_b_s[i] - y_b_s[i-1]) > max_grad:
+                y_b_s[i] = y_b_s[i-1] + max_grad * np.sign(y_b_s[i] - y_b_s[i-1])
+        # Aplanar en reversa también (bidireccional)
+        for i in range(len(y_t_s) - 2, -1, -1):
+            if abs(y_t_s[i] - y_t_s[i+1]) > max_grad:
+                y_t_s[i] = y_t_s[i+1] + max_grad * np.sign(y_t_s[i] - y_t_s[i+1])
+            if abs(y_b_s[i] - y_b_s[i+1]) > max_grad:
+                y_b_s[i] = y_b_s[i+1] + max_grad * np.sign(y_b_s[i] - y_b_s[i+1])
+        
+        # Segundo pase de suavizado después del aplanado
+        y_t_s = cv2.GaussianBlur(y_t_s.reshape(1, -1), (ventana, 1), 0).flatten()
+        y_b_s = cv2.GaussianBlur(y_b_s.reshape(1, -1), (ventana, 1), 0).flatten()
+        
         nueva = np.zeros_like(mask)
         for i, x in enumerate(full_xs):
-            yt, yb = int(y_t_s[i]), int(y_b_s[i])
-            if yb >= yt:
-                cv2.line(nueva, (int(x), max(0, min(h-1, yt))), (int(x), max(0, min(h-1, yb))), 255, 1)
-        return cv2.morphologyEx(nueva, cv2.MORPH_OPEN, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (7, 7)))
+            yt, yb_v = int(y_t_s[i]), int(y_b_s[i])
+            if yb_v >= yt:
+                cv2.line(nueva, (int(x), max(0, min(h-1, yt))), (int(x), max(0, min(h-1, yb_v))), 255, 1)
+        
+        # Suavizado final del contorno
+        nueva = cv2.morphologyEx(nueva, cv2.MORPH_CLOSE, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (9, 9)))
+        nueva = cv2.GaussianBlur(nueva, (5, 5), 0)
+        _, nueva = cv2.threshold(nueva, 127, 255, cv2.THRESH_BINARY)
+        return nueva
