@@ -108,3 +108,52 @@ def calcular_nivel_detalle(images, saliency_maps, model, transform=None, device=
         'D': D,
         'RCAP_valores': rcap_values
     }
+
+def calcular_exactitud_areas(images, saliency_maps, threshold=0.1):
+    """
+    Calcula la Precisión Espacial (P) del mapa de calor respecto a la segmentación.
+    P = VP / (VP + FP) * 100
+    """
+    if not isinstance(images, (list, tuple)):
+        images = [images]
+        saliency_maps = [saliency_maps]
+        
+    p_values = []
+    
+    for img, m_map in zip(images, saliency_maps):
+        # 1. Definir Ground Truth (Máscara binaria de conjuntiva)
+        if img.shape[-1] == 4:
+            gt_mask = img[..., 3] > 0
+        else:
+            gt_mask = np.any(img > 0, axis=-1)
+            
+        # 2. Binarizar el mapa de calor
+        # m_map está en rango 0-255 si es uint8, si es así lo normalizamos temporalmente
+        if m_map.max() > 1.0:
+            m_norm = m_map.astype(np.float32) / 255.0
+        else:
+            m_norm = m_map
+            
+        heat_mask = m_norm >= threshold
+        
+        # 3. Calcular VP y FP
+        # VP: píxeles donde ambas son positivas
+        vp = np.sum(gt_mask & heat_mask)
+        
+        # FP: píxeles donde el mapa está activo pero la máscara GT no
+        fp = np.sum((~gt_mask) & heat_mask)
+        
+        if (vp + fp) == 0:
+            p = 0.0
+        else:
+            p = vp / (vp + fp)
+            
+        p_values.append(p)
+        
+    # Promedio general en porcentaje
+    P_percent = np.mean(p_values) * 100 if p_values else 0.0
+    
+    return {
+        'P': P_percent,
+        'P_valores': p_values
+    }

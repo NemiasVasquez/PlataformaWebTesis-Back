@@ -2,7 +2,7 @@ import torch
 import numpy as np
 import cv2
 import os
-from ..indicadores.nivel_detalle import calcular_nivel_detalle
+from ..indicadores.nivel_detalle import calcular_nivel_detalle, calcular_exactitud_areas
 
 def generate_smoothgrad(model, device, img_tensor, original_img, class_idx, num_samples=30, stdev_spread=0.15):
     """

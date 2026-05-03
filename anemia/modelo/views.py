@@ -64,6 +64,7 @@ def evaluar_imagen_anemia(request):
         "categoria": resultado.get('categoria', 'SIN ANEMIA'),
         "confianza": resultado.get('confianza'),
         "rcap": resultado.get('rcap'),
+        "exactitud": resultado.get('exactitud'),
     })
 
 @csrf_exempt
@@ -72,7 +73,7 @@ def evaluar_indicadores(request):
         return JsonResponse({'alert': 'Método no permitido'}, status=405)
 
     from .tasks import cargar_datos, entrenar
-    from .tasks.explicabilidad import generate_smoothgrad, calcular_nivel_detalle
+    from .tasks.explicabilidad import generate_smoothgrad, calcular_nivel_detalle, calcular_exactitud_areas
     import torch
 
     # Cargar 5 imagenes de test para evaluar
@@ -97,12 +98,21 @@ def evaluar_indicadores(request):
         saliency_maps.append(gray_map)
         images_rgb.append(img_np)
         
-    resultado = calcular_nivel_detalle(images_rgb, saliency_maps, model, device=device)
+    # Calcular D (Nivel de Detalle)
+    res_ind = calcular_nivel_detalle(images_rgb, saliency_maps, model, device=device)
+    d_val = round(res_ind['D'], 2)
+    rcap_list = [round(v, 4) for v in res_ind['RCAP_valores']]
+    
+    # Calcular P (Exactitud de Áreas)
+    res_p = calcular_exactitud_areas(images_rgb, saliency_maps, threshold=0.1)
+    p_val = round(res_p['P'], 2)
+    p_list = [round(v * 100, 2) for v in res_p['P_valores']]
     
     return JsonResponse({
-        "mensaje": "Indicadores calculados exitosamente",
-        "D": round(resultado['D'], 2),
-        "RCAP": [round(val, 4) for val in resultado['RCAP_valores']],
-        "imagenes_evaluadas": num_imgs
+        'status': 'success',
+        'd_metric': d_val,
+        'rcap_individuales': rcap_list,
+        'p_metric': p_val,
+        'p_individuales': p_list,
+        'procesadas': len(images_rgb)
     })
-    

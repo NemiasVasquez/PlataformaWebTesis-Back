@@ -17,7 +17,7 @@ from django.conf.urls.static import static
 import shutil 
 import torch
 from .explicabilidad import generate_smoothgrad
-from ..indicadores.nivel_detalle import calcular_nivel_detalle
+from ..indicadores.nivel_detalle import calcular_nivel_detalle, calcular_exactitud_areas
 
 def evaluar_imagen_individual(imagen):
     base_dir = os.path.join(settings.MEDIA_ROOT, 'pruebas')
@@ -165,15 +165,22 @@ def evaluar_imagen_individual(imagen):
             img_rgb_o_rgba = cv2.cvtColor(img, cv2.COLOR_BGRA2RGBA) if img.shape[-1] == 4 else cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
             res_ind = calcular_nivel_detalle([img_rgb_o_rgba], [gray_map], model, device=device, class_idx=pred)
             rcap_val = round(res_ind['RCAP_valores'][0], 4)
+            
+            # Calcular P (Exactitud de Áreas)
+            res_p = calcular_exactitud_areas([img_rgb_o_rgba], [gray_map], threshold=0.1)
+            exactitud_val = round(res_p['P_valores'][0] * 100, 2)
+            
         except Exception as e_ind:
             import traceback
             print(f"Error en calcular_nivel_detalle:\n{traceback.format_exc()}")
             rcap_val = 0.0
+            exactitud_val = 0.0
 
         print("  [OK] SmoothGrad generado exitosamente.")
     except Exception as e:
         print(f"  [X] Error generando SmoothGrad: {e}")
         rcap_val = 0.0
+        exactitud_val = 0.0
         
     confianza = prob_anemia if pred == 1 else (1 - prob_anemia)
     
@@ -184,5 +191,6 @@ def evaluar_imagen_individual(imagen):
         'probable_clase': "Con Anemia" if pred == 1 else "Sin Anemia",
         'categoria': resultado_clase,
         'confianza': round(confianza * 100, 1),
-        'rcap': rcap_val
+        'rcap': rcap_val,
+        'exactitud': exactitud_val
     }
