@@ -95,10 +95,20 @@ def evaluar_imagen_individual(imagen):
     model.eval()
     with torch.no_grad():
         tensor_img = torch.tensor(x).permute(0, 3, 1, 2).float().to(device)  # NCHW
+        # Normalizar a 0-1 (el modelo fue entrenado con valores normalizados)
+        tensor_img = tensor_img / 255.0
+        
         outputs = model(tensor_img)
         probs = torch.softmax(outputs, dim=1)
         prob_anemia = probs[0][1].item()  # Clase 1 = Anemia
         pred = torch.argmax(probs, dim=1).item()
+        
+        # DEBUG CAVERNÍCOLA
+        print(f"DEBUG CONFIANZA:")
+        print(f"  Raw outputs: {outputs[0].cpu().numpy()}")
+        print(f"  Softmax: {probs[0].cpu().numpy()}")
+        print(f"  prob_anemia: {prob_anemia:.4f}")
+        print(f"  pred: {pred} ({'CON ANEMIA' if pred == 1 else 'SIN ANEMIA'})")
         
     resultado_clase = "CON ANEMIA" if pred == 1 else "SIN ANEMIA"
     
@@ -114,10 +124,13 @@ def evaluar_imagen_individual(imagen):
                     shutil.rmtree(ruta_paso_new)
                 os.rename(ruta_paso_old, ruta_paso_new)
 
+    confianza = prob_anemia if pred == 1 else (1 - prob_anemia)
+    
     return {
         'valida': True,
         'directorio': f"media/pruebas/{nuevo_id}",
         'prediccion': pred,
         'probable_clase': "Con Anemia" if pred == 1 else "Sin Anemia",
-        'categoria': resultado_clase, # "CON ANEMIA" or "SIN ANEMIA"
+        'categoria': resultado_clase,
+        'confianza': round(confianza * 100, 1),  # Porcentaje real del modelo
     }
