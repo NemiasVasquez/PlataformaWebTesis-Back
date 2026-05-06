@@ -68,6 +68,7 @@ def evaluar_imagen_anemia(request):
         "exactitud": resultado.get('exactitud'),
         "robustez": resultado.get('robustez'),
         "transparencia": resultado.get('transparencia'),
+        "sensibilidad": resultado.get('sensibilidad'),
         "tiempo": resultado.get('tiempo'),
     })
 
@@ -80,6 +81,7 @@ def evaluar_indicadores(request):
     from .tasks.explicabilidad import generate_smoothgrad, calcular_nivel_detalle, calcular_exactitud_areas
     from .indicadores.robustez import calcular_robustez_general, calcular_robustez_imagen
     from .indicadores.transparencia import calcular_transparencia_diagnostico, calcular_transparencia_general
+    from .indicadores.sensibilidad import calcular_sensibilidad_explicabilidad, calcular_sensibilidad_general
     import torch
 
     # Cargar 5 imagenes de test para evaluar
@@ -118,6 +120,11 @@ def evaluar_indicadores(request):
         ti_val = calcular_transparencia_diagnostico(model, tensor_img, gray_map, device=device)
         ti_list.append(ti_val)
         
+        # Calcular s individual para el lote
+        if 's_list' not in locals(): s_list = []
+        s_val = calcular_sensibilidad_explicabilidad(model, device, tensor_img, int(y_test_sample[i]))
+        s_list.append(s_val)
+        
     t_promedio = sum(tiempos) / len(tiempos) if tiempos else 0.0
         
     # Calcular D (Nivel de Detalle)
@@ -139,6 +146,10 @@ def evaluar_indicadores(request):
     nt_val = round(calcular_transparencia_general(ti_list), 2)
     ti_final_list = [round(v, 2) for v in ti_list]
     
+    # Calcular S (Sensibilidad General)
+    s_metric_val = round(calcular_sensibilidad_general(s_list), 4)
+    s_final_list = [round(v, 4) for v in s_list]
+    
     return JsonResponse({
         'status': 'success',
         'd_metric': d_val,
@@ -149,6 +160,8 @@ def evaluar_indicadores(request):
         'rg_individuales': rg_list,
         'nt_metric': nt_val,
         'nt_individuales': ti_final_list,
+        's_metric': s_metric_val,
+        's_individuales': s_final_list,
         't_promedio': round(t_promedio, 3),
         'procesadas': len(images_rgb)
     })

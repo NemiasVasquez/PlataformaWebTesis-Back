@@ -20,6 +20,7 @@ from .explicabilidad import generate_smoothgrad
 from ..indicadores.nivel_detalle import calcular_nivel_detalle, calcular_exactitud_areas
 from ..indicadores.robustez import calcular_robustez_imagen
 from ..indicadores.transparencia import calcular_transparencia_diagnostico
+from ..indicadores.sensibilidad import calcular_sensibilidad_explicabilidad
 
 def evaluar_imagen_individual(imagen):
     base_dir = os.path.join(settings.MEDIA_ROOT, 'pruebas')
@@ -183,6 +184,9 @@ def evaluar_imagen_individual(imagen):
             # Calcular Transparencia (ti)
             transparencia_val = round(calcular_transparencia_diagnostico(model, tensor_img_grad, gray_map, device=device), 2)
             
+            # Calcular Sensibilidad (S)
+            sensibilidad_val = round(float(calcular_sensibilidad_explicabilidad(model, device, tensor_img_grad, pred)), 4)
+            
         except Exception as e_ind:
             import traceback
             print(f"Error en calcular_nivel_detalle:\n{traceback.format_exc()}")
@@ -190,6 +194,7 @@ def evaluar_imagen_individual(imagen):
             exactitud_val = 0.0
             robustez_val = 0.0
             transparencia_val = 0.0
+            sensibilidad_val = 0.0
 
         print("  [OK] SmoothGrad generado exitosamente.")
     except Exception as e:
@@ -198,6 +203,7 @@ def evaluar_imagen_individual(imagen):
         exactitud_val = 0.0
         robustez_val = 0.0
         transparencia_val = 0.0
+        sensibilidad_val = 0.0
         
     confianza = prob_anemia if pred == 1 else (1 - prob_anemia)
     
@@ -212,5 +218,6 @@ def evaluar_imagen_individual(imagen):
         'exactitud': exactitud_val,
         'robustez': robustez_val,
         'transparencia': transparencia_val,
+        'sensibilidad': sensibilidad_val,
         'tiempo': tiempo_generacion
     }
