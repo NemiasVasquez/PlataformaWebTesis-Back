@@ -80,7 +80,7 @@ def ejecutar_reproceso():
     limpiar_carpeta(output_folder)
     redimensionar_imagenes(input_folder, output_folder)
 
-    print("\n✅ PROCESO COMPLETADO EXITOSAMENTE.")
+    print("\n PROCESO COMPLETADO EXITOSAMENTE.")
     print(f"Revisa las carpetas en: {os.path.join(settings.BASE_DIR, 'media/procesadas')}")
 
 if __name__ == "__main__":

@@ -18,6 +18,8 @@ import shutil
 import torch
 from .explicabilidad import generate_smoothgrad
 from ..indicadores.nivel_detalle import calcular_nivel_detalle, calcular_exactitud_areas
+from ..indicadores.robustez import calcular_robustez_imagen
+from ..indicadores.transparencia import calcular_transparencia_diagnostico
 
 def evaluar_imagen_individual(imagen):
     base_dir = os.path.join(settings.MEDIA_ROOT, 'pruebas')
@@ -145,7 +147,12 @@ def evaluar_imagen_individual(imagen):
         # SmoothGrad requiere gradientes, por lo que creamos tensor y lo enviamos sin with torch.no_grad()
         tensor_img_grad = torch.tensor(x).permute(0, 3, 1, 2).float().to(device) / 255.0
         
+        # Generar mapas de explicabilidad (SmoothGrad)
+        import time
+        inicio_t = time.time()
         heatmap, overlay = generate_smoothgrad(model, device, tensor_img_grad, img_original, pred)
+        fin_t = time.time()
+        tiempo_generacion = round(fin_t - inicio_t, 3)
         
         if img_area is not None:
             if img_area.shape[:2] != heatmap.shape[:2]:
@@ -170,17 +177,27 @@ def evaluar_imagen_individual(imagen):
             res_p = calcular_exactitud_areas([img_rgb_o_rgba], [gray_map], threshold=0.1)
             exactitud_val = round(res_p['P_valores'][0] * 100, 2)
             
+            # Calcular Robustez (RG)
+            robustez_val = round(calcular_robustez_imagen(model, tensor_img_grad, device=device), 4)
+            
+            # Calcular Transparencia (ti)
+            transparencia_val = round(calcular_transparencia_diagnostico(model, tensor_img_grad, gray_map, device=device), 2)
+            
         except Exception as e_ind:
             import traceback
             print(f"Error en calcular_nivel_detalle:\n{traceback.format_exc()}")
             rcap_val = 0.0
             exactitud_val = 0.0
+            robustez_val = 0.0
+            transparencia_val = 0.0
 
         print("  [OK] SmoothGrad generado exitosamente.")
     except Exception as e:
         print(f"  [X] Error generando SmoothGrad: {e}")
         rcap_val = 0.0
         exactitud_val = 0.0
+        robustez_val = 0.0
+        transparencia_val = 0.0
         
     confianza = prob_anemia if pred == 1 else (1 - prob_anemia)
     
@@ -192,5 +209,8 @@ def evaluar_imagen_individual(imagen):
         'categoria': resultado_clase,
         'confianza': round(confianza * 100, 1),
         'rcap': rcap_val,
-        'exactitud': exactitud_val
+        'exactitud': exactitud_val,
+        'robustez': robustez_val,
+        'transparencia': transparencia_val,
+        'tiempo': tiempo_generacion
     }
